@@ -28,7 +28,7 @@ The design follows [U-Net](https://arxiv.org/abs/1505.04597), [3D U-Net](https:/
 
 **User need and scope.** A contouring specialist needs a draft prostate mask that saves editing time without hiding edge-slice under-contours or leakage into organs at risk. This prototype compares a 2D baseline with a 3D candidate on the 3D HipMRI T2-weighted volumes and semantic masks described in the course brief. The intended output is an editable research contour and a case-level uncertainty/failure review, not autonomous treatment planning.
 
-**Pre-registered acceptance criteria.** (1) No patient appears in more than one split, including repeated scan volumes. (2) The 3D model reaches the brief's mean held-out prostate Dice target of at least 0.70. (3) The 3D model improves mean apex or base Dice by at least 0.05 over the 2D baseline without a material increase in false-positive bladder/rectum voxels. (4) The proposed contour is generated within 5 seconds per volume on the target GPU and uses at most 16 GiB peak GPU memory. (5) Five low-performing cases have inspectable input/ground-truth/prediction/error panels and a written failure explanation. These are goals to test, not achieved results.
+**Pre-registered acceptance criteria.** (1) No patient appears in more than one split, including repeated scan volumes. (2) The 3D model reaches the brief's mean held-out prostate Dice target of at least 0.70. (3) The 3D model improves mean apex or base Dice by at least 0.05 over the 2D baseline, while its false-positive fraction within either bladder or rectum rises by no more than 0.5 percentage points. (4) The proposed contour is generated within 5 seconds per volume on the target GPU and uses at most 16 GiB peak GPU memory. (5) Five low-performing cases have inspectable input/ground-truth/prediction/error panels and a written failure explanation. These are goals to test, not achieved results.
 
 **Model and course concepts.** A slice-wise U-Net is a clean baseline because it has no through-plane context. The 3D residual model tests whether volumetric receptive fields reduce jagged slice transitions. Deep supervision provides training signals at two decoder scales. Patient-level grouping prevents scan-level leakage. A binary prostate target keeps the principal clinical question focused; the original semantic mask remains available to count overlap with bladder and rectum.
 
@@ -82,7 +82,7 @@ The table below must be filled **only from the HipMRI `results.json` generated b
 | Background Dice / IoU | Awaiting HipMRI | Awaiting HipMRI |
 | Apex Dice / base Dice | Awaiting HipMRI | Awaiting HipMRI |
 | 95th-percentile surface distance (resampled voxels) | Awaiting HipMRI | Awaiting HipMRI |
-| False-positive voxels inside bladder / rectum | Awaiting HipMRI | Awaiting HipMRI |
+| False-positive voxels and fractions inside bladder / rectum | Awaiting HipMRI | Awaiting HipMRI |
 | Parameters / peak GPU VRAM / case latency | Awaiting HipMRI | Awaiting HipMRI |
 
 For the 3-5 case autopsies, inspect the `failure_cases/*.png` panels and report each case ID, patient ID, observed false-positive/false-negative boundary, whether the failure occurs at the apex/base or near an organ at risk, a plausible image-level trigger, and whether 3D helped relative to 2D. Include both false positives and false negatives. A low Dice score identifies cases to inspect; it does **not** by itself establish the cause. Add additional examples if the worst five fail to cover both error types.

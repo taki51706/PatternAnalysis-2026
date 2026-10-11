@@ -59,6 +59,9 @@ def case_metrics(pred: np.ndarray, truth: np.ndarray, anatomy: np.ndarray | None
         for name, label in (("bladder", bladder_label), ("rectum", rectum_label)):
             if label is not None:
                 region = anatomy == label
-                results[f"false_positive_{name}_voxels"] = int(np.logical_and(pred, region).sum())
-                results[f"{name}_voxels"] = int(region.sum())
+                count = int(np.logical_and(pred, region).sum())
+                total = int(region.sum())
+                results[f"false_positive_{name}_voxels"] = count
+                results[f"{name}_voxels"] = total
+                results[f"false_positive_{name}_fraction"] = count / total if total else None
     return results

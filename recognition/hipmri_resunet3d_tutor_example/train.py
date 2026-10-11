@@ -184,6 +184,10 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=3710)
     parser.add_argument("--device", default="auto")
     args = parser.parse_args()
+    chosen_labels = [label for label in (args.prostate_label, args.bladder_label, args.rectum_label)
+                     if label is not None]
+    if len(set(chosen_labels)) != len(chosen_labels):
+        parser.error("Prostate, bladder, and rectum IDs must be distinct")
     args.out.mkdir(parents=True, exist_ok=True)
     random.seed(args.seed)
     np.random.seed(args.seed)

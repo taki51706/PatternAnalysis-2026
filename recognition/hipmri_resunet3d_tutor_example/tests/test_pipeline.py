@@ -71,3 +71,10 @@ def test_models_loss_prediction_and_metrics() -> None:
     perfect = case_metrics(mask[0].numpy(), mask[0].numpy())
     assert perfect["prostate_dice"] == 1.0
     assert perfect["hd95_resampled_voxels"] == 0.0
+    anatomy = np.zeros((16, 16, 16), dtype=int)
+    anatomy[0, 0, :4] = 3
+    pred_with_leak = mask[0].numpy().copy()
+    pred_with_leak[0, 0, 0] = 1
+    leakage = case_metrics(pred_with_leak, mask[0].numpy(), anatomy, bladder_label=3)
+    assert leakage["false_positive_bladder_voxels"] == 1
+    assert leakage["false_positive_bladder_fraction"] == 0.25

@@ -35,6 +35,7 @@ def read_manifest(path: str | Path) -> list[Case]:
         raise ValueError(f"Manifest needs columns {sorted(required)}")
     cases = []
     seen = set()
+    seen_images, seen_masks = set(), set()
     for row in rows:
         case_id, patient_id = row["case_id"].strip(), row["patient_id"].strip()
         if not case_id or not patient_id or case_id in seen:
@@ -44,6 +45,10 @@ def read_manifest(path: str | Path) -> list[Case]:
         mask = (path.parent / row["mask"]).resolve()
         if not image.is_file() or not mask.is_file():
             raise FileNotFoundError(f"Missing image/mask for {case_id}: {image}, {mask}")
+        if image in seen_images or mask in seen_masks:
+            raise ValueError(f"Repeated image or mask path in manifest: {case_id}")
+        seen_images.add(image)
+        seen_masks.add(mask)
         cases.append(Case(case_id, patient_id, image, mask))
     return cases
 
