@@ -50,7 +50,7 @@ def memory_mb(device: torch.device) -> float | None:
 def segmentation_loss(logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     ce = F.cross_entropy(logits, target)
     probabilities = logits.softmax(dim=1)[:, 1]
-    foreground = (target == 1).float()
+    foreground = F.one_hot(target, num_classes=2).movedim(-1, 1)[:, 1].float()
     dims = tuple(range(1, foreground.ndim))
     intersection = (probabilities * foreground).sum(dim=dims)
     dice = (2 * intersection + 1) / (probabilities.sum(dim=dims) + foreground.sum(dim=dims) + 1)
@@ -83,7 +83,8 @@ def predict_volume(model: torch.nn.Module, image: torch.Tensor, kind: str,
 
 @torch.no_grad()
 def evaluate(model: torch.nn.Module, dataset: VolumeDataset, kind: str,
-             device: torch.device) -> tuple[dict, list[dict]]:
+             device: torch.device, bladder_label: int | None = None,
+             rectum_label: int | None = None) -> tuple[dict, list[dict]]:
     rows = []
     for sample in dataset:
         sync(device)
@@ -91,7 +92,8 @@ def evaluate(model: torch.nn.Module, dataset: VolumeDataset, kind: str,
         pred = predict_volume(model, sample["image"], kind, device)
         sync(device)
         elapsed_ms = (time.perf_counter() - started) * 1000
-        metrics = case_metrics(pred, sample["mask"].numpy())
+        metrics = case_metrics(pred, sample["mask"].numpy(), sample["anatomy"].numpy(),
+                               bladder_label, rectum_label)
         rows.append({"case_id": sample["case_id"], "patient_id": sample["patient_id"],
                      "latency_ms": elapsed_ms, **metrics})
     numeric = [key for key in rows[0] if key not in ("case_id", "patient_id")]
@@ -128,7 +130,8 @@ def train_one(kind: str, train_volumes: VolumeDataset, val_volumes: VolumeDatase
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             losses.append(float(loss.detach().cpu()))
-        val, _ = evaluate(model, val_volumes, kind, device)
+        val, _ = evaluate(model, val_volumes, kind, device,
+                          args.bladder_label, args.rectum_label)
         record = {"epoch": epoch, "train_loss": float(np.mean(losses)),
                   "val_prostate_dice": val["prostate_dice"],
                   "val_apex_dice": val["apex_dice"], "val_base_dice": val["base_dice"]}
@@ -166,6 +169,8 @@ def main() -> None:
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--prostate-label", type=int, required=True,
                         help="Inspect original mask IDs first; never assume the prostate label")
+    parser.add_argument("--bladder-label", type=int, default=None)
+    parser.add_argument("--rectum-label", type=int, default=None)
     parser.add_argument("--out", type=Path, default=Path("runs/hipmri"))
     parser.add_argument("--size", nargs=3, type=int, default=[64, 128, 128],
                         metavar=("D", "H", "W"))
@@ -196,12 +201,21 @@ def main() -> None:
     test_data = VolumeDataset(split["test"], size, args.prostate_label)
     device = choose_device(args.device)
     print(f"device={device}; cases=" + str({name: len(v) for name, v in split.items()}), flush=True)
-    results, all_rows = {}, []
+    results, all_rows, trained = {}, [], {}
     for kind in ("2d", "3d"):
         model, profile = train_one(kind, train_data, val_data, device, args.out, args)
-        validation, _ = evaluate(model, val_data, kind, device)
-        test, rows = evaluate(model, test_data, kind, device)
-        results[kind] = {"profile": profile, "validation": validation, "test": test}
+        validation, _ = evaluate(model, val_data, kind, device,
+                                 args.bladder_label, args.rectum_label)
+        results[kind] = {"profile": profile, "validation": validation}
+        trained[kind] = model.cpu()
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+    # The held-out test split is opened only after both models are selected.
+    for kind in ("2d", "3d"):
+        model = trained[kind].to(device)
+        test, rows = evaluate(model, test_data, kind, device,
+                              args.bladder_label, args.rectum_label)
+        results[kind]["test"] = test
         all_rows.extend({"model": kind, **row} for row in rows)
         del model
         if device.type == "cuda":
@@ -213,6 +227,8 @@ def main() -> None:
     results["provenance"] = {"manifest": str(Path(args.manifest).resolve()),
                              "seed": args.seed, "size_dhw": args.size,
                              "prostate_label": args.prostate_label,
+                             "bladder_label": args.bladder_label,
+                             "rectum_label": args.rectum_label,
                              "torch": torch.__version__, "device": str(device)}
     (args.out / "results.json").write_text(json.dumps(results, indent=2) + "\n")
     print(json.dumps(results, indent=2))

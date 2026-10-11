@@ -95,16 +95,22 @@ def load_split(cases: list[Case], path: str | Path) -> dict[str, list[Case]]:
     return split
 
 
-def load_volume(case: Case, size: tuple[int, int, int], prostate_label: int) -> tuple[torch.Tensor, torch.Tensor]:
-    """Return [1,D,H,W] image and [D,H,W] binary label at a fixed grid."""
+def load_volume(case: Case, size: tuple[int, int, int], prostate_label: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Return image, binary prostate target, and original anatomical IDs."""
     image_nii = nib.as_closest_canonical(nib.load(str(case.image)))
     mask_nii = nib.as_closest_canonical(nib.load(str(case.mask)))
-    if image_nii.shape != mask_nii.shape or len(image_nii.shape) != 3:
+    image_shape = image_nii.shape[:3] if len(image_nii.shape) == 4 and image_nii.shape[3] == 1 else image_nii.shape
+    mask_shape = mask_nii.shape[:3] if len(mask_nii.shape) == 4 and mask_nii.shape[3] == 1 else mask_nii.shape
+    if image_shape != mask_shape or len(image_shape) != 3:
         raise ValueError(f"Image/mask shape mismatch for {case.case_id}")
     if not np.allclose(image_nii.affine, mask_nii.affine, atol=1e-3):
         raise ValueError(f"Image/mask affine mismatch for {case.case_id}")
     image = np.asarray(image_nii.dataobj, dtype=np.float32)
     labels = np.asarray(mask_nii.dataobj, dtype=np.float32)
+    if image.ndim == 4:
+        image = image[..., 0]
+    if labels.ndim == 4:
+        labels = labels[..., 0]
     if not np.isfinite(image).all() or not np.isfinite(labels).all():
         raise ValueError(f"Non-finite voxel in {case.case_id}")
     if not np.allclose(labels, np.rint(labels), atol=1e-3):
@@ -116,14 +122,17 @@ def load_volume(case: Case, size: tuple[int, int, int], prostate_label: int) -> 
         raise ValueError(f"Too few nonzero image voxels in {case.case_id}")
     low, high = np.percentile(tissue, (0.5, 99.5))
     image = np.clip(image, low, high)
-    image = (image - float(tissue.mean())) / max(float(tissue.std()), 1e-6)
+    image = ((image - float(tissue.mean())) / max(float(tissue.std()), 1e-6)).astype(np.float32)
     image = np.transpose(image, (2, 1, 0)).copy()
-    binary = np.transpose(labels == prostate_label, (2, 1, 0)).copy()
+    anatomy = np.transpose(np.rint(labels).astype(np.float32), (2, 1, 0)).copy()
     x = torch.from_numpy(image)[None, None]
-    y = torch.from_numpy(binary.astype(np.float32))[None, None]
+    labels_tensor = torch.from_numpy(anatomy)[None, None]
     x = F.interpolate(x, size=size, mode="trilinear", align_corners=False)[0]
-    y = F.interpolate(y, size=size, mode="nearest")[0, 0].long()
-    return x, y
+    labels_tensor = F.interpolate(labels_tensor, size=size, mode="nearest")[0, 0].long()
+    y = (labels_tensor == prostate_label).long()
+    if not y.any():
+        raise ValueError(f"Resampling removed prostate target in {case.case_id}; increase grid resolution")
+    return x, y, labels_tensor
 
 
 class VolumeDataset(Dataset):
@@ -137,8 +146,8 @@ class VolumeDataset(Dataset):
 
     def __getitem__(self, index: int) -> dict:
         case = self.cases[index]
-        image, mask = load_volume(case, self.size, self.prostate_label)
-        return {"image": image, "mask": mask, "case_id": case.case_id,
+        image, mask, anatomy = load_volume(case, self.size, self.prostate_label)
+        return {"image": image, "mask": mask, "anatomy": anatomy, "case_id": case.case_id,
                 "patient_id": case.patient_id}
 
 
@@ -146,7 +155,11 @@ class SliceDataset(Dataset):
     """Materialize resized training volumes once for efficient 2D sampling."""
 
     def __init__(self, volume_dataset: VolumeDataset):
-        self.volumes = [volume_dataset[i] for i in range(len(volume_dataset))]
+        self.volumes = []
+        for i in range(len(volume_dataset)):
+            sample = volume_dataset[i]
+            sample.pop("anatomy")
+            self.volumes.append(sample)
         self.index = [(i, z) for i, vol in enumerate(self.volumes)
                       for z in range(vol["mask"].shape[0])]
         self.weights = [5.0 if self.volumes[i]["mask"][z].any() else 1.0

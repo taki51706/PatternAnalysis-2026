@@ -12,9 +12,12 @@ def _overlap(pred: np.ndarray, truth: np.ndarray) -> tuple[float, float]:
     return 2 * intersection / (p + t), intersection / max(p + t - intersection, 1)
 
 
-def _hd95(pred: np.ndarray, truth: np.ndarray) -> float | None:
+def _hd95(pred: np.ndarray, truth: np.ndarray) -> float:
+    if not pred.any() and not truth.any():
+        return 0.0
     if not pred.any() or not truth.any():
-        return None
+        # Penalize complete misses rather than silently dropping them from the mean.
+        return float(np.linalg.norm(np.asarray(pred.shape) - 1))
     structure = ndi.generate_binary_structure(3, 1)
     p_border = np.logical_xor(pred, ndi.binary_erosion(pred, structure=structure))
     t_border = np.logical_xor(truth, ndi.binary_erosion(truth, structure=structure))
@@ -23,7 +26,8 @@ def _hd95(pred: np.ndarray, truth: np.ndarray) -> float | None:
     return float(np.percentile(np.concatenate((p_to_t, t_to_p)), 95))
 
 
-def case_metrics(pred: np.ndarray, truth: np.ndarray) -> dict[str, float | None]:
+def case_metrics(pred: np.ndarray, truth: np.ndarray, anatomy: np.ndarray | None = None,
+                 bladder_label: int | None = None, rectum_label: int | None = None) -> dict[str, float | None]:
     pred, truth = np.asarray(pred, dtype=bool), np.asarray(truth, dtype=bool)
     if pred.shape != truth.shape or pred.ndim != 3:
         raise ValueError("Expected equal [D,H,W] binary arrays")
@@ -38,7 +42,7 @@ def case_metrics(pred: np.ndarray, truth: np.ndarray) -> dict[str, float | None]
         base_dice = float(np.mean([_overlap(pred[z], truth[z])[0] for z in base]))
     else:
         apex_dice = base_dice = None
-    return {
+    results = {
         "prostate_dice": prostate_dice,
         "prostate_iou": prostate_iou,
         "background_dice": background_dice,
@@ -49,3 +53,12 @@ def case_metrics(pred: np.ndarray, truth: np.ndarray) -> dict[str, float | None]
         "false_positive_voxels": int(np.logical_and(pred, ~truth).sum()),
         "false_negative_voxels": int(np.logical_and(~pred, truth).sum()),
     }
+    if anatomy is not None:
+        if anatomy.shape != truth.shape:
+            raise ValueError("Anatomy shape must match truth")
+        for name, label in (("bladder", bladder_label), ("rectum", rectum_label)):
+            if label is not None:
+                region = anatomy == label
+                results[f"false_positive_{name}_voxels"] = int(np.logical_and(pred, region).sum())
+                results[f"{name}_voxels"] = int(region.sum())
+    return results
