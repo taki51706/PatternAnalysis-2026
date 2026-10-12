@@ -1,0 +1,25 @@
+# Grade-readiness audit for the HipMRI tutor exemplar
+
+This is a **tutor-facing audit**, not a predicted or awarded mark. It uses the supplied **draft** COMP3710/COMP7710 brief (`COMP3710_Report_2026_draft_v2.2.pdf`); the published course profile, deadlines, and teaching-team judgment take precedence. The exemplar demonstrates a possible project, but a student must understand, verify, and independently own their submission.
+
+## Rubric map (40 marks)
+
+| Component | Evidence in this exemplar | Action before a student can claim full credit |
+| --- | --- | --- |
+| **Recognition problem — 20** (brief §5.1, pp. 13–14) | PyTorch residual **3D Improved U-Net** with deep supervision, approved as hard difficulty in §2.2 (p. 6); patient-disjoint 2D U-Net baseline; modular data, training, inference, metrics, and tests. The selected 3D model reached **0.757** patient-balanced Dice on its downsampled test grid, above the brief's **0.70** target. A stronger 2D model was independently selected by validation Dice and evaluated once on the same native test masks: **2D 0.698 versus 3D 0.694** patient-balanced native Dice; 3D minus 2D **-0.004** (descriptive paired five-patient 95% bootstrap interval **-0.075 to +0.077**). Thus, the stronger comparison shows **no established 3D Dice advantage**. | Run and document **peak GPU VRAM** and per-case inference on the target hardware (§2.2 p. 5; §5.3 p. 14). Check that the local CSIRO release matches the course's Rangpur data when access is available. Retain the early-pilot test exposure caveat and obtain an independent cohort for an untouched generalization estimate. |
+| **Commit log — 5, pass hurdle** (§5.2, pp. 13–14) | The local branch has several logical milestone commits; code and results are separated from raw data and weights. | The student must produce genuine, progressive **individual** work and explain their own decisions. A tutor-created, AI-assisted history is not proof of a student's originality. Push the student's commits; a single code-dump commit fails the hurdle. |
+| **README documentation — 10** (§5.3, p. 14) | README includes the feasibility review, exact dependencies and commands, preprocessing and split rationale, **both the common-configuration and independently tuned 2D comparisons**, parameter/CPU-latency table, five illustrated failure reviews, manager recommendation, references, and AI disclosure. A PDF export is supplied. | Add the measured GPU VRAM result and hardware details to the resource table. Verify that final README figures and PDF match the student's own rerun and that scripts remain readable and cited. |
+| **Pull request and review — 5, pass hurdle** (§5.4, p. 15) | The exemplar is on a local tutor branch; no course PR is evidenced here. | The student must open a working PR to upstream **`topic-recognition`** by the published deadline, with a professional title/body (**3 marks** for initial PR and description). After teaching-team feedback, commit requested changes and reply on the PR (**2 later marks**). The brief states that a PR is required to receive assessment marks (§4, p. 12). |
+
+## Compulsory submission gates
+
+1. **Midpoint tutor check-off:** present and discuss a one-page feasibility review during the scheduled practical. It is ungraded but required to pass (§3, pp. 11–12). The README contains a review; it cannot substitute for the student's attendance.
+2. **Progressive originality and PR:** both are explicit pass hurdles (§§5.2, 5.4, pp. 13–15). The local exemplar does not complete either hurdle for a student.
+3. **Turnitin:** submit a PDF export of the student's final README in addition to the GitHub PR (§4, p. 12). Check the published course profile for the actual deadlines; the supplied brief is a draft.
+4. **AI accountability:** disclose tools, specific assisted tasks, and verification; personally check code, losses, metrics, and claims (§6.1, p. 15). The exemplar's disclosure describes the tutor's use of Codex and must be adapted truthfully for each student.
+
+## What a 37+ path would require
+
+At **37/40**, at most **three marks** can be lost. One possible *score combination*, subject entirely to marking, is **19/20 implementation + 5/5 commit log + 9/10 documentation + 4/5 PR/review = 37**. Before the later review-response phase, only **3/5 PR marks** are available, so reaching 37 at that stage would require something like **20 + 5 + 9 + 3**. Without a PR, the arithmetic ceiling is 35 and the brief also says the assessment earns no marks; without the midpoint check-off, the student cannot pass.
+
+The existing work supports a strong demonstration, but it does **not** guarantee 37+. The stronger 2D comparison is now complete and materially changes the finding: 3D meets the course's downsampled Dice target, yet its native Dice does not exceed the independently tuned 2D baseline. The priorities are the student-specific hurdles and required GPU resource measurement. Keep the limits explicit: this is a coarse-grid CPU experiment on an internally exposed test split, with no independent cohort or clinical validation.
