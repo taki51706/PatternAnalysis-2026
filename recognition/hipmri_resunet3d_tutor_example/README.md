@@ -4,7 +4,7 @@
 
 This project studies whether a residual 3D U-Net with deep supervision gives more useful prostate contours than a standard slice-wise 2D U-Net. The intended user is a radiotherapy contouring specialist who would inspect and edit a draft contour. Global Dice alone can hide dangerous errors at the prostate apex and base, or false-positive contour inside the bladder and rectum. Both models are trained on the same patient-disjoint HipMRI split, then compared on whole-volume overlap, edge-slice overlap, anatomical leakage, inference time, and memory use. This is research software, not a clinical device.
 
-> **Evidence status:** Code and a synthetic end-to-end smoke test are complete. HipMRI images and labels have not been supplied to this computer. The synthetic test verifies that the pipeline runs; it is not a clinical result. No HipMRI accuracy, anatomical error analysis, or deployment claim is made until the course data are run.
+> **Evidence status:** Code and a synthetic end-to-end smoke test are complete. The local `keras_slices_data` folder contains paired **2D** HipMRI slices, but the native 3D `semantic_MRs` and `semantic_labels_only` folders used by this experiment are not available here. The synthetic test verifies that the pipeline runs; it is not a clinical result. No HipMRI accuracy or anatomical error claim is made until an appropriate real-data experiment is run.
 
 ## Working principles
 
@@ -39,6 +39,8 @@ The design follows [U-Net](https://arxiv.org/abs/1505.04597), [3D U-Net](https:/
 ## Data, preprocessing, and leakage prevention
 
 The course brief locates 3D HipMRI images in `/home/groups/comp3710/HipMRI_Study_open/semantic_MRs` and semantic masks in `/home/groups/comp3710/HipMRI_Study_open/semantic_labels_only` on Rangpur. The data are **not included** in this repository. Never commit images, masks, or model weights.
+
+The supplied local `/Users/taki/Downloads/keras_slices_data` is a different, preprocessed input: it has 11,460 training image/mask slice pairs, 660 validation pairs, and 540 test pairs. Filenames group them into 191, 11, and 9 scan visits respectively, each with 60 slices. The three partitions cover 31, 4, and 3 distinct patients with no patient overlap. This is enough for a **2D slice-based project**. This 3D project expects one Nifti image and mask per visit, with meaningful volume geometry; it cannot read the slice folders directly. Stacking the slices could support a separately labelled, *derived slice-stack 3D experiment*, but the slice files do not provide the original through-plane geometry. Results from such a stack should not be presented as results on the native 3D folders.
 
 Create a CSV with four columns: `case_id,patient_id,image,mask`. Each row represents a volume; multiple volumes from one patient must share the same verified patient ID. Absolute or manifest-relative paths work. If image and mask files share the same Nifti stem and a checked regular expression extracts the patient ID, `prepare_manifest.py` can create the CSV. If filenames differ, construct the CSV manually and inspect every pairing. Do not infer the patient ID from an unverified filename convention.
 

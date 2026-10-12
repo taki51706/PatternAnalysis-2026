@@ -34,13 +34,15 @@ def read_manifest(path: str | Path) -> list[Case]:
     if not required.issubset(rows[0]):
         raise ValueError(f"Manifest needs columns {sorted(required)}")
     cases = []
-    seen = set()
-    seen_images, seen_masks = set(), set()
+    seen_case_ids = set()
+    seen_images = set()
+    seen_masks = set()
     for row in rows:
-        case_id, patient_id = row["case_id"].strip(), row["patient_id"].strip()
-        if not case_id or not patient_id or case_id in seen:
+        case_id = row["case_id"].strip()
+        patient_id = row["patient_id"].strip()
+        if not case_id or not patient_id or case_id in seen_case_ids:
             raise ValueError(f"Missing or repeated case/patient ID: {row}")
-        seen.add(case_id)
+        seen_case_ids.add(case_id)
         image = (path.parent / row["image"]).resolve()
         mask = (path.parent / row["mask"]).resolve()
         if not image.is_file() or not mask.is_file():
@@ -95,49 +97,79 @@ def load_split(cases: list[Case], path: str | Path) -> dict[str, list[Case]]:
         raise ValueError("Repeated case in split")
     split = {name: [lookup[case_id] for case_id in ids] for name, ids in data.items()}
     sets = [{case.patient_id for case in split[name]} for name in ("train", "val", "test")]
-    if any(not group for group in sets) or any(sets[i] & sets[j] for i in range(3) for j in range(i + 1, 3)):
+    groups_missing = any(not group for group in sets)
+    patients_overlap = any(
+        sets[i] & sets[j] for i in range(3) for j in range(i + 1, 3)
+    )
+    if groups_missing or patients_overlap:
         raise ValueError("Empty split or patient leakage")
     return split
 
 
-def load_volume(case: Case, size: tuple[int, int, int], prostate_label: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Return image, binary prostate target, and original anatomical IDs."""
-    image_nii = nib.as_closest_canonical(nib.load(str(case.image)))
-    mask_nii = nib.as_closest_canonical(nib.load(str(case.mask)))
-    image_shape = image_nii.shape[:3] if len(image_nii.shape) == 4 and image_nii.shape[3] == 1 else image_nii.shape
-    mask_shape = mask_nii.shape[:3] if len(mask_nii.shape) == 4 and mask_nii.shape[3] == 1 else mask_nii.shape
-    if image_shape != mask_shape or len(image_shape) != 3:
+def _read_canonical_volume(path: Path) -> tuple[np.ndarray, np.ndarray]:
+    """Load a 3D Nifti volume, allowing one trailing singleton dimension."""
+    nifti = nib.as_closest_canonical(nib.load(str(path)))
+    volume = np.asarray(nifti.dataobj, dtype=np.float32)
+    if volume.ndim == 4 and volume.shape[-1] == 1:
+        volume = volume[..., 0]
+    if volume.ndim != 3:
+        raise ValueError(f"Expected a 3D Nifti volume: {path}")
+    return volume, nifti.affine
+
+
+def _normalise_image(image: np.ndarray, case_id: str) -> np.ndarray:
+    """Clip extreme intensities and standardize using nonzero tissue voxels."""
+    tissue = image[np.abs(image) > 1e-6]
+    if tissue.size < 100:
+        raise ValueError(f"Too few nonzero image voxels in {case_id}")
+    lower, upper = np.percentile(tissue, (0.5, 99.5))
+    clipped = np.clip(image, lower, upper)
+    return ((clipped - float(tissue.mean())) /
+            max(float(tissue.std()), 1e-6)).astype(np.float32)
+
+
+def _resize_to_network_grid(
+    image: np.ndarray, labels: np.ndarray, size: tuple[int, int, int]
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Convert Nifti [X,Y,Z] arrays to PyTorch [D,H,W] arrays."""
+    image_dhw = np.transpose(image, (2, 1, 0)).copy()
+    labels_dhw = np.transpose(np.rint(labels), (2, 1, 0)).copy()
+
+    image_tensor = torch.from_numpy(image_dhw)[None, None]
+    labels_tensor = torch.from_numpy(labels_dhw)[None, None]
+    image_tensor = F.interpolate(
+        image_tensor, size=size, mode="trilinear", align_corners=False
+    )[0]
+    labels_tensor = F.interpolate(labels_tensor, size=size, mode="nearest")[0, 0].long()
+    return image_tensor, labels_tensor
+
+
+def load_volume(
+    case: Case, size: tuple[int, int, int], prostate_label: int
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Return the image, binary prostate target, and anatomical label IDs."""
+    image, image_affine = _read_canonical_volume(case.image)
+    labels, mask_affine = _read_canonical_volume(case.mask)
+    if image.shape != labels.shape:
         raise ValueError(f"Image/mask shape mismatch for {case.case_id}")
-    if not np.allclose(image_nii.affine, mask_nii.affine, atol=1e-3):
+    if not np.allclose(image_affine, mask_affine, atol=1e-3):
         raise ValueError(f"Image/mask affine mismatch for {case.case_id}")
-    image = np.asarray(image_nii.dataobj, dtype=np.float32)
-    labels = np.asarray(mask_nii.dataobj, dtype=np.float32)
-    if image.ndim == 4:
-        image = image[..., 0]
-    if labels.ndim == 4:
-        labels = labels[..., 0]
     if not np.isfinite(image).all() or not np.isfinite(labels).all():
         raise ValueError(f"Non-finite voxel in {case.case_id}")
     if not np.allclose(labels, np.rint(labels), atol=1e-3):
         raise ValueError(f"Non-integer segmentation mask in {case.case_id}")
     if not np.any(labels == prostate_label):
-        raise ValueError(f"Prostate label {prostate_label} absent in {case.case_id}; audit label IDs")
-    tissue = image[np.abs(image) > 1e-6]
-    if tissue.size < 100:
-        raise ValueError(f"Too few nonzero image voxels in {case.case_id}")
-    low, high = np.percentile(tissue, (0.5, 99.5))
-    image = np.clip(image, low, high)
-    image = ((image - float(tissue.mean())) / max(float(tissue.std()), 1e-6)).astype(np.float32)
-    image = np.transpose(image, (2, 1, 0)).copy()
-    anatomy = np.transpose(np.rint(labels).astype(np.float32), (2, 1, 0)).copy()
-    x = torch.from_numpy(image)[None, None]
-    labels_tensor = torch.from_numpy(anatomy)[None, None]
-    x = F.interpolate(x, size=size, mode="trilinear", align_corners=False)[0]
-    labels_tensor = F.interpolate(labels_tensor, size=size, mode="nearest")[0, 0].long()
-    y = (labels_tensor == prostate_label).long()
-    if not y.any():
-        raise ValueError(f"Resampling removed prostate target in {case.case_id}; increase grid resolution")
-    return x, y, labels_tensor
+        raise ValueError(
+            f"Prostate label {prostate_label} absent in {case.case_id}; audit label IDs"
+        )
+    image = _normalise_image(image, case.case_id)
+    image_tensor, anatomy = _resize_to_network_grid(image, labels, size)
+    prostate_mask = (anatomy == prostate_label).long()
+    if not prostate_mask.any():
+        raise ValueError(
+            f"Resampling removed prostate target in {case.case_id}; increase grid resolution"
+        )
+    return image_tensor, prostate_mask, anatomy
 
 
 class VolumeDataset(Dataset):
@@ -163,8 +195,11 @@ class SliceDataset(Dataset):
         self.volumes = []
         for i in range(len(volume_dataset)):
             sample = volume_dataset[i]
-            sample.pop("anatomy")
-            self.volumes.append(sample)
+            self.volumes.append({
+                "image": sample["image"],
+                "mask": sample["mask"],
+                "case_id": sample["case_id"],
+            })
         self.index = [(i, z) for i, vol in enumerate(self.volumes)
                       for z in range(vol["mask"].shape[0])]
         self.weights = [5.0 if self.volumes[i]["mask"][z].any() else 1.0

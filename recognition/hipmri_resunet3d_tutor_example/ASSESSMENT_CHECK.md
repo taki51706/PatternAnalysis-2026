@@ -8,7 +8,7 @@ This is a tutor-facing check against the supplied **draft** COMP3710/COMP7710 br
 | Baseline on same evaluation split | 2D U-Net; shared patient split and resampled grid | Implemented; real-data comparison pending |
 | Modular `modules.py`, `dataset.py`, `train.py`, `predict.py` | All four files in this directory | Implemented |
 | PyTorch model components; no NumPy in `modules.py` | `modules.py` imports only PyTorch and standard-library `math` | Checked |
-| Patient-level train/validation/test separation | Explicit `patient_id` manifest, disjoint split validation, saved split | Synthetic test passed; real IDs need audit |
+| Patient-level train/validation/test separation | Explicit `patient_id` manifest, disjoint split validation, saved split | Synthetic test passed; supplied 2D slices have disjoint patient IDs across their provided splits |
 | Nifti alignment, intensity normalization, mask encoding | Affine and shape checks; canonical orientation; clipping and normalization; nearest-mask resampling; one-hot target in Dice loss | Synthetic test passed; real data pending |
 | Prostate Dice target ≥0.70, per-class Dice/IoU | `metrics.py`, `results.json` and `per_case.csv` | No real-data score yet |
 | Boundary and edge-slice investigation | Apex/base Dice, 95th-percentile surface distance, false-positive/negative overlays | Code verified; clinical interpretation pending |
@@ -31,6 +31,6 @@ This is a tutor-facing check against the supplied **draft** COMP3710/COMP7710 br
 
 ## Required before describing this as a finished empirical submission
 
-1. Mount or access the course HipMRI data and verify the patient, prostate, bladder, and rectum IDs.
+1. Obtain the native 3D HipMRI folders for this chosen project, or explicitly adapt it to a 2D or derived slice-stack study. Verify the prostate, bladder, and rectum label IDs before training.
 2. Run the locked experiment on Rangpur, inspect every generated metric and at least five real error panels, and write case-specific explanations and a conclusion supported by those findings.
 3. Export the completed README to PDF, check rendering, and perform the course PR, Turnitin, and later code-review steps in the relevant student account and timeline.
