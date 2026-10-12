@@ -78,14 +78,26 @@ def plot_patient_dice(rows: list[dict[str, str]], path: Path) -> None:
         if value != "":
             by_patient[row["patient_id"]][row["model"]].append(float(value))
     figure, axis = plt.subplots(figsize=(5.6, 4.4))
+    patient_points = []
     for patient_id, values in sorted(by_patient.items()):
         if not values["2d"] or not values["3d"]:
             continue
         baseline, improved = (np.mean(values[kind]) for kind in ("2d", "3d"))
+        patient_points.append((patient_id, float(improved)))
         axis.plot([0, 1], [baseline, improved], color="#8da8b4", linewidth=1.2)
         axis.scatter([0, 1], [baseline, improved], color=("#176b83", "#b35b38"), s=38)
-        axis.annotate(patient_id, (1, improved), xytext=(7, 0),
-                      textcoords="offset points", va="center", fontsize=8)
+    # Keep close patient scores readable without moving their plotted points.
+    previous_label_y = -1.0
+    for patient_id, improved in sorted(patient_points, key=lambda point: point[1]):
+        label_y = max(improved, previous_label_y + 0.028)
+        shifted = label_y - improved > 0.005
+        axis.annotate(
+            patient_id, xy=(1, improved), xytext=(1.05, label_y),
+            textcoords="data", va="center", fontsize=8,
+            arrowprops=(dict(arrowstyle="-", color="#8da8b4", linewidth=0.7)
+                        if shifted else None),
+        )
+        previous_label_y = label_y
     axis.set(xlim=(-0.25, 1.5), ylim=(0, 1), ylabel="Native prostate Dice",
              xticks=[0, 1], xticklabels=["2D U-Net", "3D Improved U-Net"],
              title="Test patients, visits averaged within patient")

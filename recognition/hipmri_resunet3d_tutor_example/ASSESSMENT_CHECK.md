@@ -1,40 +1,38 @@
 # Assessment requirement check
 
-This is a tutor-facing check against the supplied **draft** COMP3710/COMP7710 brief. It records evidence, not an awarded grade.
+This tutor-facing audit compares the exemplar with the supplied **draft** COMP3710/COMP7710 brief. It records evidence, not an awarded grade or a student's submission.
 
-| Brief requirement | Evidence in this project | Status |
+| Brief requirement | Evidence | Status |
 | --- | --- | --- |
-| Choose one approved project and difficulty | HipMRI 3D Improved U-Net; hard difficulty | Implemented |
-| Baseline on same evaluation split | 2D U-Net; shared patient split and resampled grid | Implemented; validation-only real-data comparison measured |
-| Modular `modules.py`, `dataset.py`, `train.py`, `predict.py` | All four files in this directory | Implemented |
-| PyTorch model components; no NumPy in `modules.py` | `modules.py` imports only PyTorch and standard-library `math` | Checked |
-| Patient-level train/validation/test separation | Explicit `patient_id` manifest, disjoint split validation, saved split | Synthetic test passed; native manifest has 211 volumes from 38 patients |
-| Nifti alignment, intensity normalization, mask encoding | Affine and shape checks; canonical orientation; clipping and normalization; nearest-mask resampling; one-hot target in Dice loss | Native data audit passed for all 211 pairs; real-data CPU pilot and tuning runs completed |
-| Training augmentation | Optional aligned left-right flip of image and masks in `dataset.py`, enabled by `train.py --augment` | Implemented; off in reported CPU runs, and no augmentation benefit has been measured |
-| Prostate Dice target ≥0.70, per-class Dice/IoU | Patient-balanced and scan-weighted binary-class metrics; native-grid and resampled-grid test values after finalization | 10-epoch validation-only 3D patient-balanced Dice was 0.597 on the resampled grid; target not demonstrated |
-| Boundary and edge-slice investigation | Apex/base Dice, false positives beyond gland extent, native-grid HD95 in millimeters, overlays | Preliminary validation metrics and pilot images exist; final-model case interpretation pending |
-| Bladder/rectum leakage | Original anatomical labels retained; optional ID-specific false-positive counts | Course tutor confirmed native IDs 3/4 for bladder/rectum |
-| Parameters, GPU memory, inference latency | `train.py` profile fields | GPU measurements pending |
-| 3–5 real failure autopsies | `predict.py` selects low-Dice cases from different patients and creates five multi-panel images and index | Five exploratory pilot panels inspected; final-model review and clinically supported triggers pending |
-| One-page feasibility review | Dedicated README section | Drafted |
-| Compulsory midpoint tutor consultation | Brief requires a 3–5 minute review check-off | Not verified; this exemplar cannot stand in for an individual student's consultation |
-| README report, figures, use instructions, versions, references, AI disclosure | README, Mermaid diagram, requirements, code map, measured validation table | Partially present; final test table, example output figure embedded in README, GPU profile, and conclusion pending |
-| Progressive commit history | Local Git branch with staged milestone commits | In progress; cannot substitute for a student's own history |
-| Pull request to upstream `topic-recognition` | Local branch based on that branch | Not submitted; tutor exemplar has no student fork |
-| Turnitin PDF export of completed README | Requires completed real-data report | Pending |
-| Respond to later code review | Requires teaching-team review after submission | Future event |
+| Approved project and difficulty | HipMRI medical image analysis; hard 3D Improved U-Net | Implemented |
+| Same-data baseline | Slice-wise 2D U-Net and 3D model use the same saved patient split, image grid, and mask encoding | Measured on validation and internal test |
+| Modular `modules.py`, `dataset.py`, `train.py`, `predict.py` | All files present; `modules.py` uses PyTorch and standard-library `math` only | Checked |
+| Patient-level train/validation/test split | 27/6/5 disjoint patients; 154/34/23 visits; saved `split.json` | Checked |
+| Nifti alignment, normalization, labels | All 211 native image/mask pairs passed shape, affine, and integer-label audit; course tutor confirmed IDs 5/3/4 | Checked |
+| Training augmentation | Aligned left-right flip option in `dataset.py`/`train.py` | Implemented; off in measured runs |
+| Dice target ≥0.70 and per-class Dice/IoU | Selected 3D internal test: resampled patient mean 0.757 and scan mean 0.737; native patient mean 0.694; background/prostate Dice and IoU recorded | Brief's downsampled target met; stricter native 0.70 check not met |
+| Boundary and edge-slice analysis | Native patient mean apex 0.348, base 0.636, HD95 8.17 mm; five final-model panels | Measured, with small-cohort uncertainty |
+| Bladder/rectum leakage | Native patient mean false-positive fractions 0.97% and 0.261% for 3D, lower than the 2D baseline | Measured |
+| Parameters, memory, inference latency | 3D: 93,358 parameters and 74 ms model-only CPU inference per volume | Target-GPU memory and latency unmeasured |
+| Three to five failure autopsies | Five panels from different patients, with observed false positives/negatives and written case reviews | Completed; no specialist adjudication |
+| One-page feasibility review | Dedicated README section with need, goals, risks, budget, and fallback | Completed |
+| README report, figures, versions, references, AI disclosure | Completed README, patient Dice plot, representative error panel, code map, exact CPU configuration, measured tables | Completed as tutor exemplar |
+| Progressive commit history | Local `tutor-example/hipmri-3d` branch with milestone commits | Present; not a student's own history |
+| Midpoint tutor consultation | Brief calls for a 3–5 minute review/check-off | Requires student's own attendance |
+| Pull request to upstream `topic-recognition` | Exemplar is on a local branch, with no student fork | Requires student account and course workflow |
+| Turnitin PDF | A rendered PDF of the completed README is supplied separately | Tutor demonstration only; student submission remains theirs |
+| Respond to later code review | Depends on teaching-team review after submission | Future event |
 
-## Verified locally
+## Local verification
 
-- `pytest`: synthetic tests cover patient disjointness, singleton 4D Nifti support, tensor types, gradient flow, native-grid exact-match metrics, suffix-aware pairing, patient-balanced aggregation, and failure-case diversity. Rerun them after the latest code changes.
-- One-epoch synthetic end-to-end run: both models trained, selected checkpoints, generated curves, evaluated the same held-out synthetic case, and wrote results/per-case files.
-- `predict.py`: reloaded both checkpoints and generated a five-column, three-slice error figure. Its visual layout was inspected.
-- The synthetic numerical scores are intentionally excluded from the README results table because they are not HipMRI results.
-- The 211 native image/mask pairs passed an audit of shape, affine, and integer labels. A one-epoch CPU run trained and predicted on real data; its exploratory 3D model missed the prostate on the five displayed failure panels. A 10-epoch validation-only run reached patient-balanced resampled-grid Dice 0.606 (2D) and 0.597 (3D) on 34 visits from 6 patients. Neither is a held-out performance claim or evidence that the ≥0.70 target was reached.
-- The first one-epoch pilot exposed this same test split. Any later result on it must be labeled an internal test comparison, not an untouched blind estimate.
+- The automated suite has 18 synthetic tests covering split disjointness, singleton 4D Nifti support, alignment, tensor shapes, gradient flow, native-grid metrics, suffix-aware pairing, patient-balanced aggregation, one-time test gate, and case-selection diversity. Synthetic scores are never presented as HipMRI performance.
+- The native audit passed for 211 pairs from 38 patients. A train/validation-only crop check confirmed all 188 prostates lie within a central 128×128 crop; the crop candidates were not selected because their 3D validation Dice was lower.
+- Four candidates were compared using validation data only; the selected full-field weight-20 run reached 3D validation Dice 0.684. Its one-time internal test on 23 visits yielded native patient-balanced Dice 0.694 versus 0.549 for 2D. The paired five-patient bootstrap difference interval was +0.020 to +0.283, which is descriptive for this small cohort.
+- All five final-model case panels were inspected. They include a patient for whom 2D outperformed 3D and apex omissions despite good whole-volume overlap.
+- The **earlier one-epoch pilot exposed this same test split** before the validation-only gate existed. All subsequent scores on it are internal exploratory comparisons. A genuinely blind estimate requires a separate independent cohort.
 
-## Required before describing this as a finished empirical submission
+## Remaining course or scientific gates
 
-1. Choose architecture and training settings from validation data, complete a higher-resolution run on a suitable GPU, and evaluate the selected run once. Report that this particular test split was seen during the exploratory pilot. For a blind generalization estimate, obtain an independent patient cohort or prospective unseen holdout.
-2. Inspect every generated metric and at least five final-model error panels; embed representative outputs in the README and write case-specific explanations, likely triggers, and an evidence-based conclusion. Measure target-GPU memory and latency.
-3. Complete the midpoint tutor consultation check-off. Export the completed README to PDF, check rendering, and perform the course PR, Turnitin, and later code-review steps in the relevant student account and timeline.
+1. For a full-resolution claim, run a separately selected higher-resolution experiment on a suitable GPU and measure target-GPU memory and latency. The reported CPU result belongs to a coarse grid and small model.
+2. For generalization and clinical usefulness, evaluate an unseen patient cohort, obtain contour specialist adjudication, and assess native-space dosimetric impact. No automatic clinical use is supported by this exemplar.
+3. Each student must complete the tutor check-off, independent implementation/history, course pull request, Turnitin submission, and later review response in the required account and timeline.

@@ -4,7 +4,7 @@
 
 This project studies whether a residual 3D U-Net with deep supervision gives more useful prostate contours than a standard slice-wise 2D U-Net. The intended user is a radiotherapy contouring specialist who would inspect and edit a draft contour. Global Dice alone can hide dangerous errors at the prostate apex and base, or false-positive contour inside the bladder and rectum. Both models are trained on the same patient-disjoint HipMRI split, then compared on whole-volume overlap, edge-slice overlap, anatomical leakage, inference time, and memory use. This is research software, not a clinical device.
 
-> **Evidence status:** The downloaded HipMRI release supplies 211 paired native 3D MRI and semantic-mask volumes from 38 patients. All pairs passed a shape, affine, and integer-label audit. The course tutor confirmed native IDs 5=prostate, 3=bladder, and 4=rectum. A one-epoch CPU pilot trained and produced real-data prediction panels, but its small network and short training run did not meet the assignment's performance target. A 10-epoch, validation-only CPU tuning run has also completed; its scores are preliminary and appear below. A full-resolution GPU benchmark, target-GPU resource profile, and final specialist case review remain pending.
+> **Evidence status (12 October 2026):** The native release supplies 211 paired 3D MRI/mask volumes from 38 patients; all pairs passed the shape, affine, and label audit. The course tutor confirmed IDs 5=prostate, 3=bladder, and 4=rectum. Four CPU candidates were compared on validation data and one was evaluated once on 23 test visits from five patients. On the **native MRI grid**, patient-balanced prostate Dice was 0.549 for 2D and 0.694 for 3D. On the coarse **resampled network grid**, it was 0.610 and 0.757. This test split had been viewed in an earlier one-epoch pilot, so these are internal exploratory results. Target-GPU memory, full-resolution performance, independent-cohort performance, and clinical utility are unmeasured.
 
 ## Working principles
 
@@ -28,17 +28,17 @@ The design follows [U-Net](https://arxiv.org/abs/1505.04597), [3D U-Net](https:/
 
 **User need and scope.** A contouring specialist needs a draft prostate mask that saves editing time without hiding edge-slice under-contours or leakage into organs at risk. This prototype compares a 2D baseline with a 3D candidate on the 3D HipMRI T2-weighted volumes and semantic masks described in the course brief. The intended output is an editable research contour and a case-level uncertainty/failure review, not autonomous treatment planning.
 
-**Acceptance criteria.** (1) No patient appears in more than one split, including repeated scan volumes. (2) The 3D model reaches the brief's mean held-out prostate Dice target of at least 0.70, reported both by scan and with each patient weighted equally. (3) The 3D model improves mean apex or base Dice by at least 0.05 over the 2D baseline, while its false-positive fraction within either bladder or rectum rises by no more than 0.5 percentage points. (4) The proposed contour is generated within 5 seconds per volume on the target GPU and uses at most 16 GiB peak GPU memory. (5) Five low-performing cases from different patients have inspectable input/ground-truth/prediction/error panels and a written failure explanation. These are goals to test, not achieved results.
+**Acceptance criteria and outcome.** (1) Patient-disjoint splitting: met by the saved 27/6/5-patient split. (2) The brief's downsampled 3D test Dice target of at least 0.70: met on the resampled grid (patient mean 0.757; scan mean 0.737). A stricter native-grid check remains below 0.70 (patient mean 0.694; scan mean 0.665). (3) Mean apex or base Dice gain at least 0.05 without more than 0.5 percentage-point extra bladder/rectum false-positive fraction: the native base gain was 0.188 and both leakage fractions decreased, but the five-patient base-gain interval includes zero. (4) Under 5 seconds and 16 GiB on the target GPU: unverified; model-only CPU latency was 74 ms and no GPU memory measurement exists. (5) Five distinct-patient case panels and written review: completed. These project criteria are local evaluation goals; they do not imply clinical readiness or a course grade.
 
 **Model and course concepts.** A slice-wise U-Net is a clean baseline because it has no through-plane context. The 3D residual model tests whether volumetric receptive fields reduce jagged slice transitions. Deep supervision provides training signals at two decoder scales. Patient-level grouping prevents scan-level leakage. A binary prostate target keeps the principal clinical question focused; the original semantic mask remains available to count overlap with bladder and rectum.
 
-**Preliminary feasibility evidence.** A three-patient synthetic Nifti smoke test exercised split creation, label loading, a forward/backward pass for both networks, checkpoint saving, test inference, metrics, and error-panel generation. The downloaded 3D release contains 211 image/mask pairs from 38 patients; every pair passed shape and affine checks, and every mask contains ID 5. The course tutor confirmed native IDs 5/3/4 for prostate/bladder/rectum. The default grid is `64×128×128`; a GPU resource pilot on Rangpur is needed before the full training job.
+**Feasibility evidence.** A synthetic Nifti smoke test exercised loading, splitting, gradient flow, checkpointing, inference, metrics, and figures. The native audit passed for all 211 pairs and found prostate ID 5 in every mask. A train/validation-only crop audit found every prostate inside a central 128×128 crop, but the best 3D validation candidate still used the full field. The reported experiment uses a CPU-friendly `32×64×64` grid and four starting channels per model. The code supports a larger grid, but the final measured result belongs to this low-resolution configuration.
 
-**Risks, budget, and fallback.** The principal risks are misidentified patient IDs, wrong semantic label IDs, lost small structures during resampling, class imbalance, and 3D GPU exhaustion. The planned development stage is a short baseline and 3D pilot, followed by validation-only tuning and a larger GPU run. If memory exceeds budget, reduce the 3D grid or network width and document the resulting resolution loss; retain the working 2D baseline. The first software pilot opened this test split before the validation-only gate was added. Subsequent tuning uses validation only, but later results on this same test split cannot be called an untouched blind benchmark.
+**Risks, budget, and fallback.** The measured risks are class imbalance, small structures lost during resampling, weak apex contours, and inter-patient variation. A larger 3D grid may improve detail but needs a new validation-only resource pilot and a target-GPU memory check. Retain the 2D baseline as a transparent comparison. The first one-epoch software pilot opened this same test split before the validation-only gate was added. Later test scores are therefore internal comparisons, not blind estimates; a genuinely blind estimate needs an independent patient cohort or a prospective unseen holdout.
 
 ## Data, preprocessing, and leakage prevention
 
-The course brief locates 3D HipMRI images in `/home/groups/comp3710/HipMRI_Study_open/semantic_MRs` and semantic masks in `/home/groups/comp3710/HipMRI_Study_open/semantic_labels_only` on Rangpur. The downloaded [CSIRO HipMRI release](https://doi.org/10.25919/45t8-p065) is available locally in `semantic_MRs_anon` and `semantic_labels_anon`. Its ZIP matches the SHA-256 checksum in the downloaded metadata. These directories contain 211 image/mask pairs representing 38 patients. The data are **not included** in this repository. Never commit images, masks, or model weights.
+The course brief locates 3D HipMRI images in `/home/groups/comp3710/HipMRI_Study_open/semantic_MRs` and semantic masks in `/home/groups/comp3710/HipMRI_Study_open/semantic_labels_only` on Rangpur. The downloaded [CSIRO HipMRI release](https://doi.org/10.25919/45t8-p065) is available locally in `semantic_MRs_anon` and `semantic_labels_anon`. Its ZIP matches the SHA-256 checksum in the downloaded metadata. These directories contain 211 image/mask pairs representing 38 patients. **Raw NIfTI volumes and masks are not included** in this source repository; the report includes only anonymized illustrative figures. Keep the raw data and model weights out of Git.
 
 The supplied local `keras_slices_data` is a different, preprocessed input: it has 11,460 training image/mask slice pairs, 660 validation pairs, and 540 test pairs. Filenames group them into 191, 11, and 9 scan visits respectively, each with 60 slices. The three partitions cover 31, 4, and 3 distinct patients with no patient overlap. This is enough for a **2D slice-based project**. The present experiment uses the newly supplied native 3D release instead.
 
@@ -62,61 +62,96 @@ python audit_data.py --manifest runs/hipmri_native/manifest.csv \
 
 The audit reports the original semantic label IDs, case dimensions, voxel spacing, and image/mask alignment. The actual audit found 210 volumes of shape `256×256×128` and one of `256×256×144`; all 211 masks contain ID 5. Prostate ID 5 occupies about **0.10% of native voxels** across the release, so class imbalance is substantial. The training script requires the prostate ID and accepts the other two IDs for organ-at-risk leakage counts. It splits **patients**, not slices or volumes, with a fixed seed and target proportions 70%/15%/15%. The exact case assignment is saved in the run directory's `split.json` and reused on reruns. The same split and resized grid are used for both models. Each headline metric is reported both as a scan average and as a patient-balanced average, because patients contribute different numbers of weekly visits.
 
-The binary target is encoded as two channels inside the Dice loss via PyTorch one-hot encoding. Cross-entropy receives integer class indices. Native mask labels are retained separately for bladder/rectum error counts. During training, validation metrics use the common **resampled grid**, and checkpoints are chosen by patient-balanced validation prostate Dice. A final evaluation also restores predictions with nearest-neighbor interpolation to the canonical native mask grid and reports native-grid Dice, IoU, and 95th-percentile surface distance in millimeters. Resampled edge-slice metrics and the prediction panels remain resolution-dependent. Inference latency measures the model call on an already preprocessed grid, not end-to-end clinical workflow time.
+The binary target is encoded as two channels inside the Dice loss via PyTorch one-hot encoding. Cross-entropy receives integer class indices. Native semantic labels are retained separately for bladder/rectum error counts. Validation uses the common **resampled grid**, and checkpoints are selected by patient-balanced validation prostate Dice. The locked test evaluation restores predictions with nearest-neighbor interpolation to the canonical native mask grid and computes native-grid Dice, IoU, apex/base Dice, anatomical leakage, and 95th-percentile surface distance in millimeters. The panels show the **resampled** grid; they cannot establish native-space boundary quality. Latency times the model call after preprocessing, not a clinical workflow.
 
 ## Reproduce the experiment
 
-Use Python 3.12 and install the exact versions in `requirements.txt`. On Rangpur, the course GPU cluster, install a PyTorch build appropriate for its CUDA driver using the [official PyTorch instructions](https://pytorch.org/get-started/locally/); then install the remaining pinned packages. The local smoke test used CPU PyTorch 2.11.0. From this directory:
+Use Python 3.12 and install the exact versions in `requirements.txt`. The measured run used CPU PyTorch 2.11.0. On Rangpur, install a PyTorch build appropriate for its CUDA driver using the [official PyTorch instructions](https://pytorch.org/get-started/locally/). From this directory, create the manifest as shown above, then run:
 
 ```bash
 python -m pip install -r requirements.txt
 python -m pytest -q tests
-python audit_data.py --manifest runs/hipmri_native/manifest.csv
 python train.py --manifest runs/hipmri_native/manifest.csv \
   --prostate-label 5 --bladder-label 3 --rectum-label 4 \
-  --out runs/hipmri --device cuda --epochs 60 --size 64 128 128 \
-  --validation-only
+  --out runs/hipmri_native_weight20 --device cpu --seed 3710 \
+  --size 32 64 64 --width-2d 4 --width-3d 4 \
+  --lr 0.001 --foreground-weight 20 --epochs 10 --patience 10 \
+  --batch-2d 16 --batch-3d 1 --validation-only
 python evaluate_test.py --manifest runs/hipmri_native/manifest.csv \
-  --run-dir runs/hipmri --device cuda
+  --run-dir runs/hipmri_native_weight20 --device cpu
 python predict.py --manifest runs/hipmri_native/manifest.csv \
-  --run-dir runs/hipmri --count 5 --device cuda
+  --run-dir runs/hipmri_native_weight20 --count 5 --device cpu
+python analyze_results.py \
+  --per-case runs/hipmri_native_weight20/per_case.csv \
+  --out runs/hipmri_native_weight20/paired_summary.json \
+  --figure figures/patient_dice_comparison.png
 ```
 
-`train.py` trains the 2D U-Net and 3D Improved U-Net sequentially, chooses each checkpoint by patient-balanced validation prostate Dice, and plots losses and validation Dice. Run each resource or hyperparameter candidate with `--validation-only`; compare only validation metrics, choose one run and freeze its settings, then run `evaluate_test.py` on that directory with the **same manifest path** recorded during training. A later full run may add `--augment` after its value has been checked on validation data. The finalization command uses the saved best weights and saved patient split, writes native-grid and resampled-grid test metrics to `results.json` and `per_case.csv`, and refuses a second evaluation of the same run. It writes `test_evaluation_started.json` before opening test voxels; if it is interrupted, inspect the partial run manually before any attempt to rerun it. The training step also saves `2d_best.pt`, `3d_best.pt`, and curves. Profiles include optimizer-step counts and wall-clock fit time because the 2D slice sampler and 3D volume loader do not have equal steps per epoch. `predict.py --split val` can inspect validation-only runs; its default `--split test` refuses those runs. After finalization, it loads saved weights, prints case Dice values, and writes five low-Dice multi-panel figures from different patients plus `autopsy_index.csv` to `runs/hipmri/failure_cases`. The run directory is ignored by Git.
+The command sequence documents the **configuration and one-time workflow**; the included evidence archive contains the already evaluated run. Use a fresh output directory if retraining. `train.py` fits both models sequentially and chooses each best checkpoint using patient-balanced validation Dice. `evaluate_test.py` requires the same manifest path, saved split, and preprocessing; it writes `results.json` and `per_case.csv`, places `test_evaluation_started.json` before reading test voxels, and refuses a second test evaluation of that run. `predict.py` produces five distinct-patient, three-slice panels. `analyze_results.py` computes descriptive paired patient-bootstrap intervals with 10,000 resamples and plots each patient's mean Dice. The run directory is ignored by Git; the source archive contains no dataset or weights.
 
-For a first resource pilot, add `--validation-only --epochs 1 --size 32 64 64 --width-3d 4 --width-2d 4`; this checks training and validation without opening the test set and cannot be used for final performance claims. The first one-epoch software pilot was run before `--validation-only` existed, so it exposed this split's test output; those figures and scores are explicitly exploratory. Re-evaluating this same test split after tuning remains an **internal comparison**, not an untouched blind estimate. A genuinely blind performance estimate requires a new independent patient cohort or a prospective holdout that has not been inspected. This Mac has CPU-only PyTorch, so a full experiment should use an appropriate GPU environment. Run long jobs as Slurm batch jobs on Rangpur according to the course cluster instructions.
+For further model or resource tuning, use `--validation-only` and view only validation results (`predict.py --split val`). The one-epoch software pilot predates this gate and exposed the same test split. This is disclosed alongside every test result. The saved test run must not be re-evaluated to choose thresholds or settings; a fresh independent cohort is needed for an unbiased external estimate. CPU timings from this Mac do not establish GPU performance. A larger GPU experiment should be a separate, validation-gated run and should follow the course cluster's Slurm instructions.
 
-A further **planned**, validation-only preprocessing experiment will test `--crop-xy 128`, reducing the in-plane field of view before resizing. Its usefulness must be decided from training anatomy checks and validation metrics alone; no crop result is reported here yet. A crop could remove anatomy or distort an edge if applied without checking coverage, so the full native mask must remain available for final scoring.
+Optional `--crop-xy 128` takes a fixed central 128×128 crop before resizing. On train/validation masks, all 188 prostates were contained. The validation label-resampling round-trip Dice ceiling improved from 0.780 to 0.864, but both cropped 3D validation candidates scored below the selected full-field 3D candidate. The native mask remains the scoring reference. Optional `--augment` applies paired image/mask flips in training only; it was off for every reported run, so no augmentation benefit is claimed.
 
 ## Quantitative results and failure analysis
 
-The completed 10-epoch CPU tuning run used the native release, a `32×64×64` grid, four base channels for each network, and cross-entropy foreground weight 1. It involved 34 validation visits from 6 patients. Checkpoints were chosen on patient-balanced validation prostate Dice. These resampled-grid values compare candidates; they are **not held-out test performance**.
+Four candidates used the **same** patient split: 154 training visits (27 patients), 34 validation visits (6 patients), and 23 reserved test visits (5 patients). The 3D choice was made by the highest patient-balanced **resampled validation** Dice; the probability threshold of 0.5 was also kept after a validation-only sweep. No test metric selected the final candidate. All runs used grid `32×64×64`, four starting channels per network, learning rate 0.001, and training-only checkpoint selection.
 
-| Validation-only CPU measure | 2D U-Net | 3D Improved U-Net |
+| Validation-only candidate | 2D patient Dice | 3D patient Dice |
 | --- | ---: | ---: |
-| Best checkpoint epoch | 5 | 6 |
-| Patient-balanced prostate Dice | 0.606 | 0.597 |
-| Patient-balanced apex / base Dice | 0.404 / 0.310 | 0.192 / 0.511 |
-| Patient-balanced 95th-percentile surface distance, resampled voxels | 2.303 | 13.385 |
+| Full field; foreground weight 1; 10 epochs | 0.606 | 0.597 |
+| **Full field; weight 20; 10 epochs (selected)** | **0.631** | **0.684** |
+| Central crop 128; weight 20; 10 epochs | 0.708 | 0.637 |
+| Central crop 128; weight 5; 15 epochs | 0.700 | 0.667 |
 
-The 3D candidate improved base overlap in this small-grid validation run but performed substantially worse at the apex. This does not establish a clinical gain: nearest-neighbor resampling can erase fine boundaries, and the higher 3D surface-distance value warrants case-level inspection. The one-epoch CPU software check and its five observed panels are documented separately in [PILOT_NOTES.md](PILOT_NOTES.md).
+The crop improved the 2D candidate but reduced the 3D validation score relative to the selected full-field run. These validation results cannot be interpreted as test performance. The selected 2D and 3D checkpoints were epochs 6 and 5, respectively. The earlier one-epoch software check is described in [PILOT_NOTES.md](PILOT_NOTES.md).
 
-The table below is reserved for a selected real-data run evaluated after validation-only tuning. Empty cells are intentional. Because the initial pilot exposed this same test split, fill it as an **internal test comparison**, with the split-exposure caveat alongside the numbers.
+### Internal test comparison
 
-| Internal test metric | 2D U-Net baseline | 3D Improved U-Net |
+The selected run was evaluated once on 23 visits from five distinct patients. **The same split had already been viewed in the early pilot**, so this is an internal exploratory comparison, not an untouched estimate of generalization. Patient-balanced figures average each patient's visits first; scan averages give each visit equal weight. All values below come from the saved `results.json` and `per_case.csv`.
+
+| Test metric | 2D U-Net | 3D Improved U-Net |
 | --- | ---: | ---: |
-| Test patients / volumes | Awaiting selected run | Awaiting selected run |
-| Native-grid prostate Dice / IoU, patient-balanced | Awaiting full run | Awaiting full run |
-| Resampled-grid prostate Dice / IoU, patient-balanced | Awaiting full run | Awaiting full run |
-| Background Dice / IoU | Awaiting full run | Awaiting full run |
-| Apex Dice / base Dice; outside-extent false positives | Awaiting full run | Awaiting full run |
-| 95th-percentile surface distance (native millimeters / resampled voxels) | Awaiting full run | Awaiting full run |
-| False-positive voxels and fractions inside bladder / rectum | Awaiting full run | Awaiting full run |
-| Parameters / peak GPU VRAM / case latency | Awaiting full run | Awaiting full run |
+| Native prostate Dice, patient mean | 0.549 | **0.694** |
+| Native prostate Dice, scan mean | 0.605 | **0.665** |
+| Native prostate IoU, patient mean | 0.390 | **0.542** |
+| Resampled prostate Dice, patient mean | 0.610 | **0.757** |
+| Resampled prostate Dice, scan mean | 0.668 | **0.737** |
+| Native background Dice, patient mean | 0.99952 | 0.99969 |
+| Native background IoU, patient mean | 0.99904 | 0.99937 |
 
-For the 3-5 case autopsies, inspect the `failure_cases/*.png` panels and report each case ID, patient ID, observed false-positive/false-negative boundary, whether the failure occurs at the apex/base or near an organ at risk, a plausible image-level trigger, and whether 3D helped relative to 2D. Include both false positives and false negatives. A low Dice score identifies cases to inspect; it does **not** by itself establish the cause. Add additional examples if the worst five fail to cover both error types.
+The native patient-balanced Dice gain was **+0.144**. A paired bootstrap over the **five patients** gave a descriptive 95% interval of **+0.020 to +0.283** (10,000 resamples). This small internal cohort and prior test exposure limit inference. Background scores are near 1 because background dominates the image; they do not establish contour quality. The brief specifies downsampled HipMRI 3D data, and the 3D model exceeds its 0.70 Dice target on that network grid. Restoring contours to native resolution reduces the 3D patient mean to 0.694 and the scan mean to 0.665, which limits the strength of a native-boundary claim.
 
-**Manager recommendation (pending real-data evidence):** Retain mandatory specialist review of every contour, especially apex/base slices and any predicted voxels inside bladder or rectum. Advance the 3D model only if its held-out boundary gain survives the case-level failure review and justifies its extra memory and latency. The generated masks are not suitable for clinical use without a larger external validation and a native-space dosimetric assessment.
+| Native-grid boundary and resource metric | 2D U-Net | 3D Improved U-Net |
+| --- | ---: | ---: |
+| Apex Dice, patient mean | 0.301 | 0.348 |
+| Base Dice, patient mean | 0.449 | **0.636** |
+| HD95, patient mean (mm; lower is better) | 14.41 | **8.17** |
+| False-positive voxels beyond gland slice extent, patient mean | 1,270 | **425** |
+| False-positive fraction inside bladder, patient mean | 2.28% | **0.97%** |
+| False-positive fraction inside rectum, patient mean | 0.341% | **0.261%** |
+| Trainable parameters | 30,782 | 93,358 |
+| Model-only CPU inference, patient mean | 50.1 ms | 74.0 ms |
+| CPU fit including validation | 240 s | 469 s |
+| Peak target-GPU memory | Unmeasured | Unmeasured |
+
+The native base Dice gain was +0.188 (paired patient-bootstrap interval -0.018 to +0.508); the apex gain was +0.047 (interval -0.079 to +0.180). Thus the prespecified 0.05 edge-slice goal is met by the base point estimate, but it is uncertain across five patients. Native HD95 fell by 6.23 mm (descriptive interval -10.46 to -2.01 mm). Bladder and rectum leakage fractions decreased on average, but some individual cases still have organ overlap. CPU timing excludes Nifti loading, preprocessing, and contour review; target-GPU latency and memory remain unmeasured.
+
+![Native-grid Dice by test patient; weekly visits averaged within each patient.](figures/patient_dice_comparison.png)
+
+### Five distinct-patient case reviews
+
+The panels show the **coarse resampled grid**. Cyan outlines are the expert and model contours; in error columns, red means false-positive prediction and blue means missed expert prostate. Cases are selected by lowest 3D Dice with at most one visit per patient. The native Dice figures below come from `per_case.csv`; they can differ from panel-grid Dice. The observed discrepancy between a contour and an expert mask is a failure; the image-level reason is only a hypothesis without a specialist adjudication.
+
+1. **Case_005_Week0, patient 005; native Dice 0.259 → 0.369.** Both models nearly omit the small apex target; the 3D native apex Dice is 0. At mid gland the 3D outline is too small, with clear blue missed pixels. At the base, 2D extends beyond the expert boundary while 3D follows it more closely but still has red and blue edge errors. Small target size and coarse resampling are plausible contributors, not proven causes. Trigger for review: empty apex prediction or blue edge band.
+2. **Case_022_Week7, patient 022; native Dice 0.532 → 0.684.** The 3D mid-gland contour is more centered, but still adds red pixels at an outer edge. Both models over-extend part of the base. Native bladder false-positive fraction remains 4.6% for 3D, despite improving from 8.7% for 2D. Trigger: any contour touching bladder or extending above the expert gland extent.
+3. **Case_019_Week1, patient 019; native Dice 0.718 → 0.609.** This is a counterexample: 2D is better. The 3D mid-gland outline underfills the upper boundary, and the small base target is poorly captured by both models. Native base Dice drops from 0.517 to 0.399; 3D HD95 rises from 9.36 to 13.42 mm. Trigger: substantial blue under-contour even when a 3D outline looks smooth.
+4. **Case_042_Week0, patient 042; native Dice 0.419 → 0.809.** At the apex, the 2D contour is displaced from the small expert target while 3D is closer. At mid gland, 2D leaves a broad blue missed region. At the base, 2D misses the contour entirely (native base Dice 0), while 3D recovers most of it (0.800) with some remaining blue pixels. Trigger: a blank base slice or displaced apex outline.
+5. **Case_041_Week0, patient 041; native Dice 0.513 → 0.745.** Both models miss the tiny apex target (native apex Dice 0 for both). The 2D mid-gland mask leaves a broad blue inferior edge; its base contour adds red false-positive pixels. The 3D contours are closer at mid/base but retain missed pixels. Trigger: an empty apex slice despite good whole-volume Dice.
+
+![Case 005: apex, mid-gland, and base MRI, expert contour, both predictions, and red/blue errors on the resampled grid.](figures/case_005_error_panel.png)
+
+**Recommendation to the contouring manager.** Use these masks only as research drafts with **specialist review of every case and every edge slice**; accept zero contours automatically. Prioritize checks for an empty apex/base, blue under-contours, and predicted voxels inside bladder or rectum. The 3D candidate merits a separate higher-resolution GPU study because it improved native mean overlap, base Dice, HD95, and average organ leakage here, but it also lost to 2D for patient 019 and missed apex tissue for patients 005 and 041. Before clinical consideration, obtain an independent patient cohort, target-GPU memory/latency, specialist failure adjudication, and native-space dosimetric evaluation.
 
 ## Code map
 
@@ -124,16 +159,18 @@ For the 3-5 case autopsies, inspect the `failure_cases/*.png` panels and report 
 | --- | --- |
 | `modules.py` | PyTorch-only 2D baseline and residual 3D model components |
 | `dataset.py` | Nifti loading, normalization, verified patient splitting, aligned training augmentation, 2D/3D datasets |
-| `train.py` | Training, validation, optional direct test evaluation, checkpoints, curves, profiling |
+| `train.py` | Validation-gated training, patient-balanced checkpoint selection, curves, profiling |
 | `evaluate_test.py` | One-time test evaluation of the selected validation-only run |
-| `predict.py` | Saved-weight inference and visual error panels |
-| `metrics.py` | Case-level Dice, IoU, surface, apex/base, and OAR leakage metrics |
+| `predict.py` | Saved-weight inference and six-column visual error panels |
+| `metrics.py` | Native and resampled Dice, IoU, HD95, apex/base, and organ leakage metrics |
 | `audit_data.py`, `prepare_manifest.py` | Data inspection and optional manifest construction |
-| `tests/test_pipeline.py` | Synthetic alignment, leakage, shape, gradient, and metric checks |
+| `analyze_crop.py` | Train/validation-only crop coverage and label round-trip audit |
+| `analyze_results.py` | Patient-level paired bootstrap and Dice figure |
+| `tests/` | Synthetic alignment, leakage, shape, gradient, locked-evaluation, and metric checks |
 
 ## Artificial Intelligence Usage Disclosure
 
-OpenAI Codex assisted the tutor in drafting the project structure, PyTorch implementation, documentation, and debugging. The tutor exemplar's code was reviewed with syntax checks, automated synthetic tests, a complete one-epoch synthetic training and prediction smoke test, a native-data audit, a one-epoch CPU pilot on the real data, a validation-only CPU tuning run, and visual inspection of the pilot output panels. Synthetic tests check software operation only. The real-data pilot and tuning run do not establish final clinical performance. Clinical boundary quality and operating thresholds require a full experiment and specialist review. Students must independently implement, verify, cite, and disclose any AI assistance in their own submissions.
+OpenAI Codex assisted the tutor in designing, implementing, debugging, training, analyzing, plotting, and writing this exemplar. The tutor confirmed the mask IDs; the rest of the recorded computational audit and analysis was performed with Codex assistance. The project passed automated synthetic checks and a native-data audit, four validation-only CPU candidate comparisons, one selected-run internal test evaluation, and visual review of five test panels. These checks establish that the code ran and that the reported numbers match the saved outputs; they do not establish clinical safety, causal explanations for errors, or independent generalization. Students must independently implement, verify, cite, and disclose any AI assistance in their own submissions.
 
 ## References
 
