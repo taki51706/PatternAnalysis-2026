@@ -60,6 +60,13 @@ def memory_mb(device: torch.device) -> float | None:
     return None
 
 
+def reserved_memory_mb(device: torch.device) -> float | None:
+    """Peak CUDA allocator reservation, including cached blocks."""
+    if device.type == "cuda":
+        return torch.cuda.max_memory_reserved() / 2**20
+    return None
+
+
 def segmentation_loss(
     logits: torch.Tensor, target: torch.Tensor, foreground_weight: float = 1.0
 ) -> torch.Tensor:
@@ -399,7 +406,8 @@ def main() -> None:
     args.out.mkdir(parents=True, exist_ok=True)
     existing_outputs = [
         name for name in (
-            "results.json", "per_case.csv", "2d_best.pt", "3d_best.pt",
+            "results.json", "per_case.csv", "validation_per_case.csv",
+            "2d_best.pt", "3d_best.pt",
             "2d_history.json", "3d_history.json",
         ) if (args.out / name).exists()
     ]
@@ -427,17 +435,28 @@ def main() -> None:
     print(f"device={device}; cases={split_counts}", flush=True)
 
     results = {}
+    validation_rows = []
     trained_models = {}
     for kind in ("2d", "3d"):
         model, profile = train_one(kind, train_data, val_data, device, args.out, args)
-        validation, _ = evaluate(
+        validation, rows = evaluate(
             model, val_data, kind, device, args.bladder_label,
             args.rectum_label, native=not args.validation_only,
         )
+        validation_rows.extend({"model": kind, **row} for row in rows)
+        profile["peak_device_memory_mb"] = memory_mb(device)
+        profile["peak_reserved_device_memory_mb"] = reserved_memory_mb(device)
         results[kind] = {"profile": profile, "validation": validation}
         trained_models[kind] = model.cpu()
         if device.type == "cuda":
             torch.cuda.empty_cache()
+
+    with (args.out / "validation_per_case.csv").open(
+        "w", newline="", encoding="utf-8"
+    ) as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(validation_rows[0]))
+        writer.writeheader()
+        writer.writerows(validation_rows)
 
     if not args.validation_only:
         # The held-out test split is opened only after both models are selected.
@@ -479,6 +498,9 @@ def main() -> None:
         "width_3d": args.width_3d,
         "torch": torch.__version__,
         "device": str(device),
+        "gpu_device_name": (
+            torch.cuda.get_device_name(device) if device.type == "cuda" else None
+        ),
         "validation_only": args.validation_only,
     }
     (args.out / "results.json").write_text(json.dumps(results, indent=2) + "\n")
