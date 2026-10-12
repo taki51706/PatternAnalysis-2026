@@ -1,6 +1,6 @@
 # Assessment requirement check
 
-This tutor-facing audit compares the exemplar with the supplied **draft** COMP3710/COMP7710 brief. It records evidence, not an awarded grade or a student's submission.
+This check compares the HipMRI project with the supplied **draft** COMP3710/COMP7710 brief. It records evidence available in this repository, not an awarded grade.
 
 | Brief requirement | Evidence | Status |
 | --- | --- | --- |
@@ -16,11 +16,11 @@ This tutor-facing audit compares the exemplar with the supplied **draft** COMP37
 | Parameters, memory, inference latency | 3D: 93,358 parameters and 74.0 ms model-only CPU inference; tuned 2D: 30,782 parameters and 52.1 ms | Target-GPU memory and latency unmeasured |
 | Three to five failure autopsies | Five distinct-patient full-field 2D/3D panels, with observed false positives/negatives and written case reviews; panels do not display tuned cropped 2D | Completed for common-configuration pair; no specialist adjudication |
 | One-page feasibility review | Dedicated README section with need, goals, risks, budget, and fallback | Completed |
-| README report, figures, versions, references, AI disclosure | Completed README, paired-patient Dice figures, five error panels, code map, exact CPU configuration, and measured tables | Completed as tutor exemplar |
-| Progressive commit history | Local `tutor-example/hipmri-3d` branch with milestone commits | Present; not a student's own history |
-| Midpoint tutor consultation | Brief calls for a 3–5 minute review/check-off | Requires student's own attendance |
-| Pull request to upstream `topic-recognition` | Exemplar is on a local branch, with no student fork | Requires student account and course workflow |
-| Turnitin PDF | A rendered PDF of the completed README is supplied separately | Tutor demonstration only; student submission remains theirs |
+| README report, figures, versions, references, AI disclosure | Completed README, paired-patient Dice figures, five error panels, code map, exact CPU configuration, and measured tables | Present; verify against final submission |
+| Progressive commit history | Local history contains milestone commits | Assess progression and authorship from the actual Git history |
+| Midpoint tutor consultation | Brief calls for a 3–5 minute review/check-off | Attendance is not evidenced in this repository |
+| Pull request to upstream `topic-recognition` | No course pull request is evidenced in this checkout | Complete through the course workflow |
+| Turnitin PDF | A rendered PDF of the completed README is supplied separately | Verify final PDF submission |
 | Respond to later code review | Depends on teaching-team review after submission | Future event |
 
 ## Local verification
@@ -34,5 +34,5 @@ This tutor-facing audit compares the exemplar with the supplied **draft** COMP37
 ## Remaining course or scientific gates
 
 1. For a full-resolution claim, run a separately selected higher-resolution experiment on a suitable GPU and measure target-GPU memory and latency. The reported CPU result belongs to a coarse grid and small model.
-2. For generalization and clinical usefulness, evaluate an unseen patient cohort, obtain contour specialist adjudication, and assess native-space dosimetric impact. No automatic clinical use is supported by this exemplar.
-3. Each student must complete the tutor check-off, independent implementation/history, course pull request, Turnitin submission, and later review response in the required account and timeline.
+2. For generalization and clinical usefulness, evaluate an unseen patient cohort, obtain contour specialist adjudication, and assess native-space dosimetric impact. The present evidence does not support automatic clinical use.
+3. Complete the tutor check-off, document individual implementation and history accurately, submit the course pull request and Turnitin PDF, and respond to later review in the required timeline.
