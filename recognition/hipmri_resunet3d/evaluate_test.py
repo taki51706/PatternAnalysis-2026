@@ -8,7 +8,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from dataset import VolumeDataset, load_split, read_manifest
+from dataset import VolumeDataset, load_split, read_manifest, verify_manifest_provenance
 from predict import load_model
 from train import choose_device, evaluate
 
@@ -53,8 +53,7 @@ def main() -> None:
     args = parser.parse_args()
 
     report = load_pending_report(args.run_dir)
-    if Path(report["provenance"]["manifest"]).resolve() != Path(args.manifest).resolve():
-        raise ValueError("Manifest path differs from the one recorded during training")
+    verify_manifest_provenance(report["provenance"], args.manifest)
     device = choose_device(args.device)
     baseline, baseline_config = load_model(args.run_dir / "2d_best.pt", device)
     improved, improved_config = load_model(args.run_dir / "3d_best.pt", device)

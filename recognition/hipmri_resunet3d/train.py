@@ -27,6 +27,7 @@ from dataset import (
     central_xy_slices,
     load_native_anatomy,
     load_split,
+    manifest_sha256,
     read_manifest,
     save_split,
     split_by_patient,
@@ -419,6 +420,7 @@ def main() -> None:
         )
     set_random_seed(args.seed)
 
+    manifest_digest = manifest_sha256(args.manifest)
     cases = read_manifest(args.manifest)
     split_path = args.out / "split.json"
     if split_path.exists():
@@ -458,6 +460,9 @@ def main() -> None:
         writer.writeheader()
         writer.writerows(validation_rows)
 
+    if manifest_sha256(args.manifest) != manifest_digest:
+        raise ValueError("Manifest contents changed during training")
+
     if not args.validation_only:
         # The held-out test split is opened only after both models are selected.
         test_data = VolumeDataset(split["test"], size, args.prostate_label, args.crop_xy)
@@ -479,8 +484,11 @@ def main() -> None:
             writer.writeheader()
             writer.writerows(all_rows)
 
+    if manifest_sha256(args.manifest) != manifest_digest:
+        raise ValueError("Manifest contents changed during training")
     results["provenance"] = {
         "manifest": str(Path(args.manifest).resolve()),
+        "manifest_sha256": manifest_digest,
         "seed": args.seed,
         "size_dhw": args.size,
         "crop_xy": args.crop_xy,

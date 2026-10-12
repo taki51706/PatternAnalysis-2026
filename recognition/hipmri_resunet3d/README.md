@@ -6,6 +6,8 @@ This project studies whether a residual 3D U-Net with deep supervision gives mor
 
 > **Evidence status (12 October 2026):** The native release supplies 211 paired 3D MRI/mask volumes from 38 patients; all pairs passed the shape, affine, and label audit. The course tutor confirmed IDs 5=prostate, 3=bladder, and 4=rectum. Four CPU candidates were compared on validation data. On the native grid of 23 test visits from five patients, 3D patient-balanced prostate Dice was **0.694**; a matched-preprocessing 2D baseline scored **0.549**, but the independently validation-selected 2D baseline scored **0.698**. The latter removes the apparent 3D Dice advantage. The 3D model reached **0.757** on its downsampled network grid, exceeding the brief's 0.70 target. An early pilot exposed this test split, so every test number is an internal exploratory result. Target-GPU memory, independent-cohort performance, and clinical utility are unmeasured.
 
+**Availability of evidence.** Git tracks the source, tests, this README, and figures, but not raw NIfTI data, model weights, or run records. Full-field JSON/CSV records remain in an ignored local `runs/` directory in this checkout. The independently tuned 2D run records were generated in a separate work directory and are not included here. Its results are reported from that prior analysis, so a reader of this checkout cannot independently verify those numbers from machine-readable outputs. The tables below distinguish the common full-field comparison from this stronger 2D check.
+
 ## Working principles
 
 The baseline is a 2D U-Net that processes each axial MRI slice independently. The proposed model uses 3D convolution, skip connections, residual blocks, and two auxiliary segmentation heads during training. Both predict background or prostate from a normalized Nifti volume. Image volumes are reoriented to canonical axes, clipped at the 0.5th and 99.5th nonzero-intensity percentiles, standardized per case, and resampled to a fixed `[D,H,W]` grid with trilinear interpolation. Anatomical label maps use nearest-neighbor interpolation. Cross-entropy and a prostate Dice loss train the main head; auxiliary 3D heads add lower-resolution losses. Optional `--foreground-weight` adjusts the prostate term of cross-entropy and must be selected using validation data. Optional `--augment` applies random left-right flips to training images and their aligned masks for both models; validation and test data are never augmented. The reported CPU runs had augmentation off.
@@ -40,26 +42,26 @@ The design follows [U-Net](https://arxiv.org/abs/1505.04597), [3D U-Net](https:/
 
 ## Data, preprocessing, and leakage prevention
 
-The course brief locates 3D HipMRI images in `/home/groups/comp3710/HipMRI_Study_open/semantic_MRs` and semantic masks in `/home/groups/comp3710/HipMRI_Study_open/semantic_labels_only` on Rangpur. The downloaded [CSIRO HipMRI release](https://doi.org/10.25919/45t8-p065) is available locally in `semantic_MRs_anon` and `semantic_labels_anon`. Its ZIP matches the SHA-256 checksum in the downloaded metadata. These directories contain 211 image/mask pairs representing 38 patients. **Raw NIfTI volumes and masks are not included** in this source repository; the report includes only anonymized illustrative figures. Keep the raw data and model weights out of Git.
+The course brief locates 3D HipMRI images in `/home/groups/comp3710/HipMRI_Study_open/semantic_MRs` and semantic masks in `/home/groups/comp3710/HipMRI_Study_open/semantic_labels_only` on Rangpur. The experiment used the separately downloaded [CSIRO HipMRI release](https://doi.org/10.25919/45t8-p065), whose `semantic_MRs_anon` and `semantic_labels_anon` directories contained 211 image/mask pairs representing 38 patients. The original downloaded ZIP matched the SHA-256 checksum in its metadata. **Raw NIfTI volumes and masks are not included** in this repository, and the original machine-specific data path is no longer available here. Obtain the same release and regenerate the manifest before running the code. The report includes only anonymized illustrative figures; keep raw data and model weights out of Git.
 
-The supplied local `keras_slices_data` is a different, preprocessed input: it has 11,460 training image/mask slice pairs, 660 validation pairs, and 540 test pairs. Filenames group them into 191, 11, and 9 scan visits respectively, each with 60 slices. The three partitions cover 31, 4, and 3 distinct patients with no patient overlap. This is enough for a **2D slice-based project**. The present experiment uses the newly supplied native 3D release instead.
+The separately supplied `keras_slices_data` is a different, preprocessed input: it has 11,460 training image/mask slice pairs, 660 validation pairs, and 540 test pairs. Filenames group them into 191, 11, and 9 scan visits respectively, each with 60 slices. The three partitions cover 31, 4, and 3 distinct patients with no patient overlap. This is enough for a **2D slice-based project**. The present experiment uses the native 3D release instead.
 
 Create a CSV with four columns: `case_id,patient_id,image,mask`. Each row represents a volume; multiple volumes from one patient must share the same verified patient ID. Absolute or manifest-relative paths work. The downloaded release names paired files `Case_004_Week0_LFOV.nii.gz` and `Case_004_Week0_SEMANTIC_LFOV.nii.gz`. `prepare_manifest.py` removes those known suffixes before pairing and extracts the patient number from the shared case key. Inspect pair counts before training; do not infer patient IDs from an unverified naming convention in another release.
 
 The native masks contain integer IDs 0–5. The course tutor confirmed **5=prostate, 3=bladder, and 4=rectum** for these files. The downloaded metadata does not include a native ID legend; the names of IDs 1 and 2 remain anatomical inferences and are not used as targets here. The [CAN3D paper](https://arxiv.org/pdf/2109.05443) uses a different, one-based class numbering in its text; do not copy those numbers into the training command.
 
-Run the audit before selecting mask IDs:
+Set `HIPMRI_ROOT` to the directory where you extracted the CSIRO release. The path below is a placeholder, not the original local path. Generate a new manifest because any saved manifest with absolute paths to the original machine cannot load data in a new checkout. Run the audit before selecting mask IDs:
 
 ```bash
-HIPMRI_ROOT=/Users/taki/Downloads/2021-09-20_Dowling_Jason_51392v2/data/HipMRI_study_complete_release_v1
+HIPMRI_ROOT=/absolute/path/to/HipMRI_study_complete_release_v1
 python prepare_manifest.py \
   --image-dir "$HIPMRI_ROOT/semantic_MRs_anon" \
   --mask-dir "$HIPMRI_ROOT/semantic_labels_anon" \
   --image-suffix _LFOV --mask-suffix _SEMANTIC_LFOV \
   --patient-regex '^Case_([0-9]+)_Week[0-9]+$' \
-  --out runs/hipmri_native/manifest.csv
-python audit_data.py --manifest runs/hipmri_native/manifest.csv \
-  --out runs/hipmri_native/data_audit.json
+  --out runs/reproduce_native/manifest.csv
+python audit_data.py --manifest runs/reproduce_native/manifest.csv \
+  --out runs/reproduce_native/data_audit.json
 ```
 
 The audit reports the original semantic label IDs, case dimensions, voxel spacing, and image/mask alignment. The actual audit found 210 volumes of shape `256×256×128` and one of `256×256×144`; all 211 masks contain ID 5. Prostate ID 5 occupies about **0.10% of native voxels** across the release, so class imbalance is substantial. The training script requires the prostate ID and accepts the other two IDs for organ-at-risk leakage counts. It splits **patients**, not slices or volumes, with a fixed seed and target proportions 70%/15%/15%. The exact assignment is saved in `split.json`. The two models in the common-configuration comparison share both split and resized grid; the independently tuned 2D model keeps the split but uses a central crop. Native-grid scoring gives all models the same physical reference. Each headline metric is reported both as a scan average and as a patient-balanced average, because patients contribute different numbers of weekly visits.
@@ -68,53 +70,53 @@ The binary target is encoded as two channels inside the Dice loss via PyTorch on
 
 ## Reproduce the experiment
 
-Use Python 3.12 and install the exact versions in `requirements.txt`. The measured run used CPU PyTorch 2.11.0. On Rangpur, install a PyTorch build appropriate for its CUDA driver using the [official PyTorch instructions](https://pytorch.org/get-started/locally/). From this directory, create the manifest as shown above, then run:
+Use Python 3.12 and install the exact versions in `requirements.txt`. The measured run used CPU PyTorch 2.11.0. On Rangpur, install a PyTorch build appropriate for its CUDA driver using the [official PyTorch instructions](https://pytorch.org/get-started/locally/). From this directory, obtain the raw release and create a **new** manifest as shown above. The commands below use new output directories, so they do not overwrite the recorded local run or the tracked figures. They reproduce the configuration and analysis workflow, not a blind test: the original pilot had already exposed these test patients.
 
 ```bash
 python -m pip install -r requirements.txt
 python -m pytest -q tests
-python train.py --manifest runs/hipmri_native/manifest.csv \
+python train.py --manifest runs/reproduce_native/manifest.csv \
   --prostate-label 5 --bladder-label 3 --rectum-label 4 \
-  --out runs/hipmri_native_weight20 --device cpu --seed 3710 \
+  --out runs/reproduce_fullfield_weight20 --device cpu --seed 3710 \
   --size 32 64 64 --width-2d 4 --width-3d 4 \
   --lr 0.001 --foreground-weight 20 --epochs 10 --patience 10 \
   --batch-2d 16 --batch-3d 1 --validation-only
-python evaluate_test.py --manifest runs/hipmri_native/manifest.csv \
-  --run-dir runs/hipmri_native_weight20 --device cpu
-python predict.py --manifest runs/hipmri_native/manifest.csv \
-  --run-dir runs/hipmri_native_weight20 --count 5 --device cpu
+python evaluate_test.py --manifest runs/reproduce_native/manifest.csv \
+  --run-dir runs/reproduce_fullfield_weight20 --device cpu
+python predict.py --manifest runs/reproduce_native/manifest.csv \
+  --run-dir runs/reproduce_fullfield_weight20 --count 5 --device cpu
 python analyze_results.py \
-  --per-case runs/hipmri_native_weight20/per_case.csv \
-  --out runs/hipmri_native_weight20/paired_summary.json \
-  --figure figures/patient_dice_comparison.png
+  --per-case runs/reproduce_fullfield_weight20/per_case.csv \
+  --out runs/reproduce_fullfield_weight20/paired_summary.json \
+  --figure runs/reproduce_fullfield_weight20/patient_dice_comparison.png
 ```
 
-The stronger 2D comparator was chosen **independently on validation data** as the highest 2D patient-balanced Dice among the four candidates. For a fresh reproduction, train it in a new directory using the same patient split and these settings, then run its one-time 2D test evaluation:
+The stronger 2D comparator was chosen **independently on validation data** as the highest 2D patient-balanced Dice among the four recorded candidates. Its machine-readable run outputs are absent from this checkout. To repeat that comparison, use the same patient split and these settings in another new directory, then run its one-time 2D test evaluation:
 
 ```bash
-python train.py --manifest runs/hipmri_native/manifest.csv \
+python train.py --manifest runs/reproduce_native/manifest.csv \
   --prostate-label 5 --bladder-label 3 --rectum-label 4 \
-  --out runs/hipmri_native_crop128_weight20 --device cpu --seed 3710 \
+  --out runs/reproduce_crop128_weight20 --device cpu --seed 3710 \
   --size 32 64 64 --crop-xy 128 --width-2d 4 --width-3d 4 \
   --lr 0.001 --foreground-weight 20 --epochs 10 --patience 10 \
   --batch-2d 16 --batch-3d 1 --validation-only
 python evaluate_2d_baseline.py \
-  --manifest runs/hipmri_native/manifest.csv \
-  --run-dir runs/hipmri_native_crop128_weight20 \
-  --reference-run runs/hipmri_native_weight20 --device cpu
+  --manifest runs/reproduce_native/manifest.csv \
+  --run-dir runs/reproduce_crop128_weight20 \
+  --reference-run runs/reproduce_fullfield_weight20 --device cpu
 python compare_models.py \
-  --selected-per-case runs/hipmri_native_weight20/per_case.csv \
-  --baseline-per-case runs/hipmri_native_crop128_weight20/2d_baseline_per_case.csv \
-  --out-csv runs/hipmri_native_crop128_weight20/paired_per_case.csv \
-  --out-json runs/hipmri_native_crop128_weight20/paired_comparison.json \
-  --figure figures/tuned_2d_vs_selected_3d.png
+  --selected-per-case runs/reproduce_fullfield_weight20/per_case.csv \
+  --baseline-per-case runs/reproduce_crop128_weight20/2d_baseline_per_case.csv \
+  --out-csv runs/reproduce_crop128_weight20/paired_per_case.csv \
+  --out-json runs/reproduce_crop128_weight20/paired_comparison.json \
+  --figure runs/reproduce_crop128_weight20/tuned_2d_vs_selected_3d.png
 ```
 
-`evaluate_2d_baseline.py` checks that the patient partitions and manifest match the finalized 3D run, claims the candidate's test split once, evaluates only its selected 2D checkpoint, and writes `2d_baseline_test.json` and `2d_baseline_per_case.csv`. The included evidence archive contains this completed comparison. The two models have different training preprocessing, so use **native-grid** metrics for their head-to-head comparison; their separate resampled-grid Dice values are not directly comparable.
+`evaluate_2d_baseline.py` checks that the patient partitions and manifest match the finalized 3D run, claims the candidate's test split once, evaluates only its selected 2D checkpoint, and writes `2d_baseline_test.json` and `2d_baseline_per_case.csv`. These tuned-2D files were produced in the separate prior work directory but are not supplied in this checkout. The two models have different training preprocessing, so use **native-grid** metrics for their head-to-head comparison; their separate resampled-grid Dice values are not directly comparable.
 
 `compare_models.py` checks that the two saved per-case files cover exactly the same patients and visits before producing the paired summary and figure; it does not reopen test images.
 
-The command sequence documents the **configuration and one-time workflow**; the included evidence archive contains the already evaluated runs. Use fresh output directories if retraining. `train.py` is validation-only by default, fits both models sequentially, and chooses each best checkpoint using patient-balanced validation Dice. An explicit `--evaluate-test` permits immediate testing for a prespecified final run; the separate `evaluate_test.py` gate was used here. That gate requires the recorded manifest, split, and preprocessing; it writes `results.json` and `per_case.csv`, places `test_evaluation_started.json` before reading test voxels, and refuses a second evaluation of that run. `predict.py` produces five distinct-patient, three-slice panels. `analyze_results.py` computes descriptive paired patient-bootstrap intervals with 10,000 resamples and plots each patient's mean Dice. Run directories are ignored by Git; the source archive contains no raw dataset or weights.
+The command sequence documents the **configuration and one-time workflow**. A fresh clone has no run records or checkpoints, so it needs the raw release, a regenerated manifest, and new training. `train.py` is validation-only by default, fits both models sequentially, and chooses each best checkpoint using patient-balanced validation Dice. An explicit `--evaluate-test` permits immediate testing for a prespecified final run; the separate `evaluate_test.py` gate was used here. That gate requires the recorded manifest, split, and preprocessing; new runs also record a SHA-256 fingerprint of the manifest and reject evaluation or prediction if its contents change. Older saved runs retain their original path-only check. The gate writes `results.json` and `per_case.csv`, places `test_evaluation_started.json` before reading test voxels, and refuses a second evaluation of that run. `predict.py` produces five distinct-patient, three-slice panels. `analyze_results.py` computes descriptive paired patient-bootstrap intervals with 10,000 resamples and plots each patient's mean Dice. Run directories are ignored by Git; the repository contains neither raw data nor model weights.
 
 For further model or resource tuning, use `--validation-only` and view only validation results (`predict.py --split val`). The one-epoch software pilot predates this gate and exposed the same test split. This is disclosed alongside every test result. The saved test run must not be re-evaluated to choose thresholds or settings; a fresh independent cohort is needed for an unbiased external estimate. CPU timings from this Mac do not establish GPU performance. On Rangpur, use the same configuration in a fresh validation-only run with `--device cuda` and a new output directory, after checking the course data against the local audit. `results.json` records the CUDA model name and each model's peak allocated and reserved memory in MiB; `validation_per_case.csv` records synchronized per-case inference latency after preprocessing. The latter includes host-to-device transfer and prediction transfer back to the CPU. Report the GPU model, grid, both memory definitions, and latency distribution with these numbers. Follow the course cluster's Slurm instructions. No target-GPU value is inferred from the CPU run.
 
@@ -168,7 +170,7 @@ Against the common full-field 2D baseline, native base Dice increased by +0.188 
 
 ### Stronger independently tuned 2D baseline
 
-The central-crop 2D model had the highest 2D validation Dice (0.708), selected **before its one-time test evaluation**. It uses the same patients and native test masks as the full-field 3D model; the input crop differs. Native metrics therefore give the fairest available comparison. The independent 2D result is saved in `2d_baseline_test.json` and `2d_baseline_per_case.csv` in the evidence archive.
+The central-crop 2D model had the highest reported 2D validation Dice (0.708), selected **before its one-time test evaluation**. The separately generated comparison used the same patients and native test masks as the full-field 3D model; the input crop differs. Native metrics therefore give the fairest available comparison. Its `2d_baseline_test.json` and `2d_baseline_per_case.csv` were produced in a prior work directory, but those machine-readable outputs are **not present in this checkout**. The table below transcribes the recorded comparison; the plotted figure is included, while an independent audit of its numeric source requires the separate run files.
 
 | Native-grid test metric, patient mean | Tuned 2D crop | Selected 3D full field |
 | --- | ---: | ---: |
@@ -234,7 +236,7 @@ The panels show the **coarse full-field resampled grid**, comparing 3D with the 
 
 ## Artificial Intelligence Usage Disclosure
 
-OpenAI Codex assisted me in designing, debugging and writing in this project. The project passed synthetic checks, a native-data audit, four validation-only CPU candidate comparisons, one selected-run test evaluation, a one-time independently selected 2D robustness evaluation, and visual review of five test panels. These checks establish that the code ran and that the reported numbers match saved outputs; they do not establish clinical safety, causal explanations for errors, or independent generalization.
+OpenAI Codex assisted with model and pipeline design, code debugging, documentation, and the later manifest-fingerprint checks. Verification included 24 synthetic tests, the recorded native-data audit, four validation-only CPU candidate comparisons, one selected-run test evaluation, a one-time independently selected 2D robustness evaluation, checks of saved numeric outputs, and visual review of five test panels. The manifest-fingerprint change was checked with a fresh synthetic training run and tests that reject altered manifests and mismatched comparison runs; it did not generate new HipMRI test results. These checks establish that the code ran and that the reported numbers match the available saved outputs. They do not establish clinical safety, causal explanations for errors, or independent generalization; the original 3D data path is no longer available here for a fresh real-data rerun.
 
 ## References
 

@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from dataset import VolumeDataset, load_split, read_manifest
+from dataset import VolumeDataset, load_split, read_manifest, verify_manifest_provenance
 from metrics import case_metrics
 from modules import ImprovedUNet3D, UNet2D
 from train import choose_device, predict_volume
@@ -129,6 +129,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.split == "test":
         require_test_results(args.run_dir)
+    report = json.loads((args.run_dir / "results.json").read_text(encoding="utf-8"))
+    verify_manifest_provenance(report["provenance"], args.manifest)
     default_dir = "failure_cases" if args.split == "test" else "validation_failure_cases"
     out = args.out or args.run_dir / default_dir
     out.mkdir(parents=True, exist_ok=True)

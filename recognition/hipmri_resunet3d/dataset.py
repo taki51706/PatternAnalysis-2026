@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import random
 from dataclasses import dataclass
@@ -21,6 +22,24 @@ class Case:
     patient_id: str
     image: Path
     mask: Path
+
+
+def manifest_sha256(path: str | Path) -> str:
+    """Fingerprint the exact case, patient, and file mapping used by a run."""
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def verify_manifest_provenance(provenance: dict, path: str | Path) -> None:
+    """Reject a moved or changed manifest before opening evaluation cases.
+
+    Older saved runs lack a fingerprint, so they retain their original path
+    check. New runs additionally lock the manifest contents.
+    """
+    if Path(provenance["manifest"]).resolve() != Path(path).resolve():
+        raise ValueError("Manifest path differs from the one recorded during training")
+    recorded_hash = provenance.get("manifest_sha256")
+    if recorded_hash is not None and manifest_sha256(path) != recorded_hash:
+        raise ValueError("Manifest contents differ from the one recorded during training")
 
 
 def read_manifest(path: str | Path) -> list[Case]:

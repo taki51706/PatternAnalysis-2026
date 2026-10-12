@@ -13,7 +13,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from dataset import VolumeDataset, load_split, read_manifest
+from dataset import VolumeDataset, load_split, read_manifest, verify_manifest_provenance
 from evaluate_test import claim_test_evaluation, load_pending_report
 from predict import load_model
 from train import choose_device, evaluate
@@ -38,8 +38,7 @@ def main() -> None:
 
     report = load_pending_report(args.run_dir)
     provenance = report["provenance"]
-    if Path(provenance["manifest"]).resolve() != args.manifest.resolve():
-        raise ValueError("Manifest path differs from the one recorded during training")
+    verify_manifest_provenance(provenance, args.manifest)
 
     cases = read_manifest(args.manifest)
     candidate_split = load_split(cases, args.run_dir / "split.json")
@@ -49,6 +48,13 @@ def main() -> None:
     reference_report = json.loads(
         (args.reference_run / "results.json").read_text(encoding="utf-8")
     )
+    reference_provenance = reference_report["provenance"]
+    verify_manifest_provenance(reference_provenance, args.manifest)
+    if any(
+        provenance.get(name) != reference_provenance.get(name)
+        for name in ("prostate_label", "bladder_label", "rectum_label")
+    ):
+        raise ValueError("Baseline and reference runs use different anatomical labels")
     if (
         reference_report.get("provenance", {}).get("validation_only") is not False
         or "test" not in reference_report.get("3d", {})

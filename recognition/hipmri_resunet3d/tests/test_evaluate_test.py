@@ -11,7 +11,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import evaluate_test  # noqa: E402
-from dataset import Case, save_split  # noqa: E402
+from dataset import Case, manifest_sha256, save_split  # noqa: E402
 from evaluate_test import claim_test_evaluation, load_pending_report  # noqa: E402
 from modules import ImprovedUNet3D, UNet2D  # noqa: E402
 
@@ -88,6 +88,7 @@ def test_finalizer_writes_native_results_then_blocks_reuse(
     report = pending_run(run_dir)
     report["provenance"].update({
         "manifest": str(manifest.resolve()),
+        "manifest_sha256": manifest_sha256(manifest),
         "size_dhw": [16, 16, 16],
         "prostate_label": 5,
         "crop_xy": crop_xy,
@@ -114,10 +115,17 @@ def test_finalizer_writes_native_results_then_blocks_reuse(
         evaluate_test.main()
     assert not (run_dir / "test_evaluation_started.json").exists()
 
+    original_manifest = manifest.read_text()
+    manifest.write_text(original_manifest.replace("patient_2", "other_patient"))
     monkeypatch.setattr(sys, "argv", [
         "evaluate_test.py", "--manifest", str(manifest),
         "--run-dir", str(run_dir), "--device", "cpu",
     ])
+    with pytest.raises(ValueError, match="Manifest contents differ"):
+        evaluate_test.main()
+    assert not (run_dir / "test_evaluation_started.json").exists()
+    manifest.write_text(original_manifest)
+
     evaluate_test.main()
     completed = json.loads((run_dir / "results.json").read_text())
     assert completed["provenance"]["validation_only"] is False
