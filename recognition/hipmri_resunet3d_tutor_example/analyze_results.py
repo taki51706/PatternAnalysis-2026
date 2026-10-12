@@ -70,7 +70,10 @@ def paired_patient_summary(
     }
 
 
-def plot_patient_dice(rows: list[dict[str, str]], path: Path) -> None:
+def plot_patient_dice(
+    rows: list[dict[str, str]], path: Path,
+    baseline_label: str = "2D U-Net", improved_label: str = "3D Improved U-Net",
+) -> None:
     """Draw paired visit-averaged native Dice values for each test patient."""
     by_patient = defaultdict(lambda: {"2d": [], "3d": []})
     for row in rows:
@@ -89,7 +92,7 @@ def plot_patient_dice(rows: list[dict[str, str]], path: Path) -> None:
     # Keep close patient scores readable without moving their plotted points.
     previous_label_y = -1.0
     for patient_id, improved in sorted(patient_points, key=lambda point: point[1]):
-        label_y = max(improved, previous_label_y + 0.028)
+        label_y = max(improved, previous_label_y + 0.038)
         shifted = label_y - improved > 0.005
         axis.annotate(
             patient_id, xy=(1, improved), xytext=(1.05, label_y),
@@ -99,7 +102,7 @@ def plot_patient_dice(rows: list[dict[str, str]], path: Path) -> None:
         )
         previous_label_y = label_y
     axis.set(xlim=(-0.25, 1.5), ylim=(0, 1), ylabel="Native prostate Dice",
-             xticks=[0, 1], xticklabels=["2D U-Net", "3D Improved U-Net"],
+             xticks=[0, 1], xticklabels=[baseline_label, improved_label],
              title="Test patients, visits averaged within patient")
     axis.grid(axis="y", color="#e3eaed")
     figure.tight_layout()
@@ -112,6 +115,8 @@ def main() -> None:
     parser.add_argument("--per-case", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--figure", type=Path, default=None)
+    parser.add_argument("--baseline-label", default="2D U-Net")
+    parser.add_argument("--improved-label", default="3D Improved U-Net")
     args = parser.parse_args()
     with args.per_case.open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
@@ -125,7 +130,7 @@ def main() -> None:
     args.out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     if args.figure is not None:
         args.figure.parent.mkdir(parents=True, exist_ok=True)
-        plot_patient_dice(rows, args.figure)
+        plot_patient_dice(rows, args.figure, args.baseline_label, args.improved_label)
     print(json.dumps(report, indent=2))
 
 
