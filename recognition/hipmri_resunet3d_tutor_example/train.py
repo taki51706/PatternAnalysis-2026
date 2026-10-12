@@ -20,8 +20,12 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader, WeightedRandomSampler
 
 from dataset import (
+    Case,
     SliceDataset,
+    TrainingVolumeDataset,
     VolumeDataset,
+    central_xy_slices,
+    load_native_anatomy,
     load_split,
     read_manifest,
     save_split,
@@ -56,8 +60,11 @@ def memory_mb(device: torch.device) -> float | None:
     return None
 
 
-def segmentation_loss(logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    cross_entropy = F.cross_entropy(logits, target)
+def segmentation_loss(
+    logits: torch.Tensor, target: torch.Tensor, foreground_weight: float = 1.0
+) -> torch.Tensor:
+    class_weights = logits.new_tensor([1.0, foreground_weight])
+    cross_entropy = F.cross_entropy(logits, target, weight=class_weights)
     probabilities = logits.softmax(dim=1)[:, 1]
     foreground = F.one_hot(target, num_classes=2).movedim(-1, 1)[:, 1].float()
     spatial_dims = tuple(range(1, foreground.ndim))
@@ -68,15 +75,20 @@ def segmentation_loss(logits: torch.Tensor, target: torch.Tensor) -> torch.Tenso
     return cross_entropy + 1 - soft_dice.mean()
 
 
-def model_loss(output: torch.Tensor | dict, target: torch.Tensor) -> torch.Tensor:
+def model_loss(
+    output: torch.Tensor | dict, target: torch.Tensor,
+    foreground_weight: float = 1.0,
+) -> torch.Tensor:
     if isinstance(output, torch.Tensor):
-        return segmentation_loss(output, target)
-    loss = segmentation_loss(output["logits"], target)
+        return segmentation_loss(output, target, foreground_weight)
+    loss = segmentation_loss(output["logits"], target, foreground_weight)
     for weight, auxiliary_logits in zip((0.25, 0.125), output["aux"]):
         scaled_target = F.interpolate(
             target[:, None].float(), size=auxiliary_logits.shape[2:], mode="nearest"
         )[:, 0].long()
-        loss += weight * segmentation_loss(auxiliary_logits, scaled_target)
+        loss += weight * segmentation_loss(
+            auxiliary_logits, scaled_target, foreground_weight
+        )
     return loss
 
 
@@ -97,23 +109,63 @@ def predict_volume(model: torch.nn.Module, image: torch.Tensor, kind: str,
 
 
 def _mean_case_metrics(rows: list[dict]) -> dict:
-    """Average metrics over cases while preserving the number evaluated."""
+    """Report both scan-weighted and patient-balanced metric averages."""
     summary = {}
     metric_names = set(rows[0]) - {"case_id", "patient_id"}
+    patient_ids = sorted({row["patient_id"] for row in rows})
     for name in sorted(metric_names):
         values = [row[name] for row in rows if row[name] is not None]
         summary[name] = float(np.mean(values)) if values else None
+        patient_values = []
+        for patient_id in patient_ids:
+            visits = [
+                row[name] for row in rows
+                if row["patient_id"] == patient_id and row[name] is not None
+            ]
+            if visits:
+                patient_values.append(float(np.mean(visits)))
+        summary[f"patient_mean_{name}"] = (
+            float(np.mean(patient_values)) if patient_values else None
+        )
     summary["cases"] = len(rows)
-    summary["patients"] = len({row["patient_id"] for row in rows})
+    summary["patients"] = len(patient_ids)
     return summary
+
+
+def native_case_metrics(
+    prediction: np.ndarray, case: Case, prostate_label: int,
+    bladder_label: int | None, rectum_label: int | None,
+    crop_xy: int | None = None,
+) -> dict:
+    """Restore the full native grid, pasting any cropped prediction in place."""
+    anatomy, spacing_dhw = load_native_anatomy(case)
+    x_range, y_range = central_xy_slices(
+        (anatomy.shape[2], anatomy.shape[1]), crop_xy
+    )
+    crop_shape = (
+        anatomy.shape[0], y_range.stop - y_range.start,
+        x_range.stop - x_range.start,
+    )
+    prediction_tensor = torch.from_numpy(prediction.astype(np.float32))[None, None]
+    restored_crop = F.interpolate(
+        prediction_tensor, size=crop_shape, mode="nearest"
+    )[0, 0].numpy().astype(bool)
+    native_prediction = np.zeros_like(anatomy, dtype=bool)
+    native_prediction[:, y_range, x_range] = restored_crop
+    native_scores = case_metrics(
+        native_prediction, anatomy == prostate_label, anatomy,
+        bladder_label, rectum_label, spacing_dhw,
+    )
+    return {f"native_{name}": value for name, value in native_scores.items()}
 
 
 @torch.no_grad()
 def evaluate(model: torch.nn.Module, dataset: VolumeDataset, kind: str,
              device: torch.device, bladder_label: int | None = None,
-             rectum_label: int | None = None) -> tuple[dict, list[dict]]:
+             rectum_label: int | None = None,
+             native: bool = False) -> tuple[dict, list[dict]]:
     rows = []
-    for sample in dataset:
+    for index, sample in enumerate(dataset):
         sync(device)
         started = time.perf_counter()
         pred = predict_volume(model, sample["image"], kind, device)
@@ -126,12 +178,18 @@ def evaluate(model: torch.nn.Module, dataset: VolumeDataset, kind: str,
             bladder_label,
             rectum_label,
         )
-        rows.append({
+        row = {
             "case_id": sample["case_id"],
             "patient_id": sample["patient_id"],
             "latency_ms": elapsed_ms,
             **metrics,
-        })
+        }
+        if native:
+            row.update(native_case_metrics(
+                pred, dataset.cases[index], dataset.prostate_label,
+                bladder_label, rectum_label, dataset.crop_xy,
+            ))
+        rows.append(row)
     return _mean_case_metrics(rows), rows
 
 
@@ -140,12 +198,13 @@ def _training_loader(
 ) -> DataLoader:
     """Use balanced slice sampling for 2D and whole volumes for 3D."""
     if kind == "2d":
-        slices = SliceDataset(volumes)
+        slices = SliceDataset(volumes, augment=args.augment)
         sampler = WeightedRandomSampler(
             slices.weights, num_samples=len(slices), replacement=True
         )
         return DataLoader(slices, batch_size=args.batch_2d, sampler=sampler)
-    return DataLoader(volumes, batch_size=args.batch_3d, shuffle=True)
+    training_volumes = TrainingVolumeDataset(volumes) if args.augment else volumes
+    return DataLoader(training_volumes, batch_size=args.batch_3d, shuffle=True)
 
 
 def _train_epoch(
@@ -153,6 +212,7 @@ def _train_epoch(
     loader: DataLoader,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
+    foreground_weight: float,
 ) -> float:
     model.train()
     losses = []
@@ -160,7 +220,7 @@ def _train_epoch(
         image = batch["image"].to(device)
         mask = batch["mask"].to(device)
         optimizer.zero_grad(set_to_none=True)
-        loss = model_loss(model(image), mask)
+        loss = model_loss(model(image), mask, foreground_weight)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
@@ -177,6 +237,7 @@ def _plot_history(history: list[dict], path: Path) -> None:
 
     for label, key in (
         ("whole volume", "val_prostate_dice"),
+        ("patient-balanced", "val_patient_mean_prostate_dice"),
         ("apex", "val_apex_dice"),
         ("base", "val_base_dice"),
     ):
@@ -211,8 +272,11 @@ def train_one(
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats()
 
+    training_started = time.perf_counter()
     for epoch in range(1, args.epochs + 1):
-        train_loss = _train_epoch(model, loader, optimizer, device)
+        train_loss = _train_epoch(
+            model, loader, optimizer, device, args.foreground_weight
+        )
         validation, _ = evaluate(
             model, val_volumes, kind, device, args.bladder_label, args.rectum_label
         )
@@ -220,14 +284,16 @@ def train_one(
             "epoch": epoch,
             "train_loss": train_loss,
             "val_prostate_dice": validation["prostate_dice"],
+            "val_patient_mean_prostate_dice": validation["patient_mean_prostate_dice"],
             "val_apex_dice": validation["apex_dice"],
             "val_base_dice": validation["base_dice"],
         }
         history.append(record)
         print(json.dumps({"model": kind, **record}), flush=True)
 
-        if validation["prostate_dice"] > best_score + 1e-5:
-            best_score = validation["prostate_dice"]
+        selection_score = validation["patient_mean_prostate_dice"]
+        if selection_score > best_score + 1e-5:
+            best_score = selection_score
             stale_epochs = 0
             torch.save({
                 "state_dict": model.state_dict(),
@@ -235,6 +301,7 @@ def train_one(
                 "width": width,
                 "size": args.size,
                 "prostate_label": args.prostate_label,
+                "crop_xy": args.crop_xy,
                 "best_epoch": epoch,
             }, checkpoint)
         else:
@@ -248,6 +315,9 @@ def train_one(
     _plot_history(history, out / f"{kind}_training_curves.png")
     profile = {
         "best_epoch": best_checkpoint["best_epoch"],
+        "completed_epochs": len(history),
+        "optimizer_steps": len(loader) * len(history),
+        "fit_seconds_including_validation": time.perf_counter() - training_started,
         "parameters": sum(parameter.numel() for parameter in model.parameters()),
         "peak_device_memory_mb": memory_mb(device),
     }
@@ -269,6 +339,10 @@ def parse_arguments() -> argparse.Namespace:
         "--size", nargs=3, type=int, default=[64, 128, 128],
         metavar=("D", "H", "W"),
     )
+    parser.add_argument(
+        "--crop-xy", type=int, default=None,
+        help="Optional even-width central crop of canonical X/Y before resizing",
+    )
     parser.add_argument("--epochs", type=int, default=60)
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--batch-2d", type=int, default=16)
@@ -276,8 +350,20 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--width-2d", type=int, default=16)
     parser.add_argument("--width-3d", type=int, default=12)
     parser.add_argument("--lr", type=float, default=2e-4)
+    parser.add_argument(
+        "--foreground-weight", type=float, default=1.0,
+        help="Cross-entropy weight for prostate voxels; tune using validation only",
+    )
     parser.add_argument("--seed", type=int, default=3710)
     parser.add_argument("--device", default="auto")
+    parser.add_argument(
+        "--augment", action="store_true",
+        help="Random training-only left-right flips for both models",
+    )
+    parser.add_argument(
+        "--validation-only", action="store_true",
+        help="Run a resource or tuning pilot without opening the test set",
+    )
     args = parser.parse_args()
     chosen_labels = [
         label for label in (
@@ -286,6 +372,10 @@ def parse_arguments() -> argparse.Namespace:
     ]
     if len(set(chosen_labels)) != len(chosen_labels):
         parser.error("Prostate, bladder, and rectum IDs must be distinct")
+    if args.foreground_weight <= 0:
+        parser.error("--foreground-weight must be positive")
+    if args.crop_xy is not None and (args.crop_xy <= 0 or args.crop_xy % 2):
+        parser.error("--crop-xy must be a positive even integer")
     return args
 
 
@@ -300,6 +390,18 @@ def set_random_seed(seed: int) -> None:
 def main() -> None:
     args = parse_arguments()
     args.out.mkdir(parents=True, exist_ok=True)
+    existing_outputs = [
+        name for name in (
+            "results.json", "per_case.csv", "2d_best.pt", "3d_best.pt",
+            "2d_history.json", "3d_history.json",
+        ) if (args.out / name).exists()
+    ]
+    if existing_outputs:
+        raise FileExistsError(
+            f"Run directory {args.out} already contains experiment outputs "
+            f"({', '.join(existing_outputs)}). Choose a new --out directory so "
+            "checkpoints and held-out results cannot be overwritten."
+        )
     set_random_seed(args.seed)
 
     cases = read_manifest(args.manifest)
@@ -311,9 +413,8 @@ def main() -> None:
         save_split(split, split_path)
 
     size = tuple(args.size)
-    train_data = VolumeDataset(split["train"], size, args.prostate_label)
-    val_data = VolumeDataset(split["val"], size, args.prostate_label)
-    test_data = VolumeDataset(split["test"], size, args.prostate_label)
+    train_data = VolumeDataset(split["train"], size, args.prostate_label, args.crop_xy)
+    val_data = VolumeDataset(split["val"], size, args.prostate_label, args.crop_xy)
     device = choose_device(args.device)
     split_counts = {name: len(group) for name, group in split.items()}
     print(f"device={device}; cases={split_counts}", flush=True)
@@ -323,40 +424,55 @@ def main() -> None:
     for kind in ("2d", "3d"):
         model, profile = train_one(kind, train_data, val_data, device, args.out, args)
         validation, _ = evaluate(
-            model, val_data, kind, device, args.bladder_label, args.rectum_label
+            model, val_data, kind, device, args.bladder_label,
+            args.rectum_label, native=not args.validation_only,
         )
         results[kind] = {"profile": profile, "validation": validation}
         trained_models[kind] = model.cpu()
         if device.type == "cuda":
             torch.cuda.empty_cache()
 
-    # The held-out test split is opened only after both models are selected.
-    all_rows = []
-    for kind in ("2d", "3d"):
-        model = trained_models[kind].to(device)
-        test, rows = evaluate(
-            model, test_data, kind, device, args.bladder_label, args.rectum_label
-        )
-        results[kind]["test"] = test
-        all_rows.extend({"model": kind, **row} for row in rows)
-        del model
-        if device.type == "cuda":
-            torch.cuda.empty_cache()
+    if not args.validation_only:
+        # The held-out test split is opened only after both models are selected.
+        test_data = VolumeDataset(split["test"], size, args.prostate_label, args.crop_xy)
+        all_rows = []
+        for kind in ("2d", "3d"):
+            model = trained_models[kind].to(device)
+            test, rows = evaluate(
+                model, test_data, kind, device, args.bladder_label,
+                args.rectum_label, native=True,
+            )
+            results[kind]["test"] = test
+            all_rows.extend({"model": kind, **row} for row in rows)
+            del model
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
 
-    with (args.out / "per_case.csv").open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(all_rows[0]))
-        writer.writeheader()
-        writer.writerows(all_rows)
+        with (args.out / "per_case.csv").open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(all_rows[0]))
+            writer.writeheader()
+            writer.writerows(all_rows)
 
     results["provenance"] = {
         "manifest": str(Path(args.manifest).resolve()),
         "seed": args.seed,
         "size_dhw": args.size,
+        "crop_xy": args.crop_xy,
         "prostate_label": args.prostate_label,
         "bladder_label": args.bladder_label,
         "rectum_label": args.rectum_label,
+        "foreground_weight": args.foreground_weight,
+        "augment": args.augment,
+        "learning_rate": args.lr,
+        "max_epochs": args.epochs,
+        "early_stopping_patience": args.patience,
+        "batch_2d": args.batch_2d,
+        "batch_3d": args.batch_3d,
+        "width_2d": args.width_2d,
+        "width_3d": args.width_3d,
         "torch": torch.__version__,
         "device": str(device),
+        "validation_only": args.validation_only,
     }
     (args.out / "results.json").write_text(json.dumps(results, indent=2) + "\n")
     print(json.dumps(results, indent=2))

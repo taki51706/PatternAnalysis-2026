@@ -117,6 +117,16 @@ def _read_canonical_volume(path: Path) -> tuple[np.ndarray, np.ndarray]:
     return volume, nifti.affine
 
 
+def load_native_anatomy(case: Case) -> tuple[np.ndarray, tuple[float, float, float]]:
+    """Return original-resolution labels and voxel spacing in [D,H,W] order."""
+    labels, affine = _read_canonical_volume(case.mask)
+    if not np.allclose(labels, np.rint(labels), atol=1e-3):
+        raise ValueError(f"Non-integer segmentation mask in {case.case_id}")
+    anatomy = np.transpose(np.rint(labels).astype(np.int16), (2, 1, 0)).copy()
+    spacing_dhw = tuple(float(value) for value in nib.affines.voxel_sizes(affine)[::-1])
+    return anatomy, spacing_dhw
+
+
 def _normalise_image(image: np.ndarray, case_id: str) -> np.ndarray:
     """Clip extreme intensities and standardize using nonzero tissue voxels."""
     tissue = image[np.abs(image) > 1e-6]
@@ -128,10 +138,30 @@ def _normalise_image(image: np.ndarray, case_id: str) -> np.ndarray:
             max(float(tissue.std()), 1e-6)).astype(np.float32)
 
 
+def central_xy_slices(
+    shape_xy: tuple[int, int], crop_xy: int | None
+) -> tuple[slice, slice]:
+    """Return matching centered X/Y index ranges for an optional fixed crop."""
+    if crop_xy is None:
+        return slice(0, shape_xy[0]), slice(0, shape_xy[1])
+    if crop_xy <= 0 or crop_xy % 2 or crop_xy > min(shape_xy):
+        raise ValueError(
+            f"crop_xy must be a positive even integer no larger than both "
+            f"image axes {shape_xy}; got {crop_xy}"
+        )
+    x0 = (shape_xy[0] - crop_xy) // 2
+    y0 = (shape_xy[1] - crop_xy) // 2
+    return slice(x0, x0 + crop_xy), slice(y0, y0 + crop_xy)
+
+
 def _resize_to_network_grid(
-    image: np.ndarray, labels: np.ndarray, size: tuple[int, int, int]
+    image: np.ndarray, labels: np.ndarray, size: tuple[int, int, int],
+    crop_xy: int | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Convert Nifti [X,Y,Z] arrays to PyTorch [D,H,W] arrays."""
+    """Crop in canonical X/Y, then convert [X,Y,Z] to network [D,H,W]."""
+    x_range, y_range = central_xy_slices(image.shape[:2], crop_xy)
+    image = image[x_range, y_range, :]
+    labels = labels[x_range, y_range, :]
     image_dhw = np.transpose(image, (2, 1, 0)).copy()
     labels_dhw = np.transpose(np.rint(labels), (2, 1, 0)).copy()
 
@@ -145,7 +175,8 @@ def _resize_to_network_grid(
 
 
 def load_volume(
-    case: Case, size: tuple[int, int, int], prostate_label: int
+    case: Case, size: tuple[int, int, int], prostate_label: int,
+    crop_xy: int | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Return the image, binary prostate target, and anatomical label IDs."""
     image, image_affine = _read_canonical_volume(case.image)
@@ -163,36 +194,69 @@ def load_volume(
             f"Prostate label {prostate_label} absent in {case.case_id}; audit label IDs"
         )
     image = _normalise_image(image, case.case_id)
-    image_tensor, anatomy = _resize_to_network_grid(image, labels, size)
+    image_tensor, anatomy = _resize_to_network_grid(image, labels, size, crop_xy)
     prostate_mask = (anatomy == prostate_label).long()
     if not prostate_mask.any():
         raise ValueError(
-            f"Resampling removed prostate target in {case.case_id}; increase grid resolution"
+            f"Crop or resampling removed prostate target in {case.case_id}; "
+            "check crop size and grid resolution"
         )
     return image_tensor, prostate_mask, anatomy
 
 
 class VolumeDataset(Dataset):
-    def __init__(self, cases: list[Case], size: tuple[int, int, int], prostate_label: int):
+    def __init__(
+        self, cases: list[Case], size: tuple[int, int, int], prostate_label: int,
+        crop_xy: int | None = None,
+    ):
         self.cases = cases
         self.size = size
         self.prostate_label = prostate_label
+        self.crop_xy = crop_xy
 
     def __len__(self) -> int:
         return len(self.cases)
 
     def __getitem__(self, index: int) -> dict:
         case = self.cases[index]
-        image, mask, anatomy = load_volume(case, self.size, self.prostate_label)
+        image, mask, anatomy = load_volume(
+            case, self.size, self.prostate_label, self.crop_xy
+        )
         return {"image": image, "mask": mask, "anatomy": anatomy, "case_id": case.case_id,
                 "patient_id": case.patient_id}
+
+
+def mirror_left_right(sample: dict) -> dict:
+    """Mirror image and labels together across the canonical left-right axis."""
+    mirrored = sample.copy()
+    for key in ("image", "mask", "anatomy"):
+        if key in mirrored:
+            mirrored[key] = torch.flip(mirrored[key], dims=(-1,))
+    return mirrored
+
+
+class TrainingVolumeDataset(Dataset):
+    """Apply random training augmentation without changing validation data."""
+
+    def __init__(self, volumes: VolumeDataset):
+        self.volumes = volumes
+
+    def __len__(self) -> int:
+        return len(self.volumes)
+
+    def __getitem__(self, index: int) -> dict:
+        sample = self.volumes[index]
+        if torch.rand(()) < 0.5:
+            sample = mirror_left_right(sample)
+        return sample
 
 
 class SliceDataset(Dataset):
     """Materialize resized training volumes once for efficient 2D sampling."""
 
-    def __init__(self, volume_dataset: VolumeDataset):
+    def __init__(self, volume_dataset: VolumeDataset, augment: bool = False):
         self.volumes = []
+        self.augment = augment
         for i in range(len(volume_dataset)):
             sample = volume_dataset[i]
             self.volumes.append({
@@ -211,5 +275,8 @@ class SliceDataset(Dataset):
     def __getitem__(self, index: int) -> dict:
         i, z = self.index[index]
         vol = self.volumes[i]
-        return {"image": vol["image"][:, z], "mask": vol["mask"][z],
-                "case_id": vol["case_id"]}
+        sample = {"image": vol["image"][:, z], "mask": vol["mask"][z],
+                  "case_id": vol["case_id"]}
+        if self.augment and torch.rand(()) < 0.5:
+            sample = mirror_left_right(sample)
+        return sample
