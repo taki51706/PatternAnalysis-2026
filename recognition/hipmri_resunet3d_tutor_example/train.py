@@ -360,11 +360,18 @@ def parse_arguments() -> argparse.Namespace:
         "--augment", action="store_true",
         help="Random training-only left-right flips for both models",
     )
-    parser.add_argument(
+    evaluation_mode = parser.add_mutually_exclusive_group()
+    evaluation_mode.add_argument(
         "--validation-only", action="store_true",
-        help="Run a resource or tuning pilot without opening the test set",
+        help="Train and select checkpoints without opening the test set (default)",
+    )
+    evaluation_mode.add_argument(
+        "--evaluate-test", action="store_true",
+        help="Also evaluate the test split after training; use only for a prespecified final run",
     )
     args = parser.parse_args()
+    # Keep older --validation-only commands working while making that mode safe by default.
+    args.validation_only = not args.evaluate_test
     chosen_labels = [
         label for label in (
             args.prostate_label, args.bladder_label, args.rectum_label
